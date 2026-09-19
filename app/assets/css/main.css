@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+
+/* ============================================================
+   Design tokens — Light theme / Primary = Purple
+   ใช้งานผ่าน utility ได้เลย เช่น bg-primary-600, text-ink-muted
+   ============================================================ */
+@theme {
+  /* Primary (purple) */
+  --color-primary-50: #f5f3ff;
+  --color-primary-100: #ede9fe;
+  --color-primary-200: #ddd6fe;
+  --color-primary-300: #c4b5fd;
+  --color-primary-400: #a78bfa;
+  --color-primary-500: #8b5cf6;
+  --color-primary-600: #7c3aed;
+  --color-primary-700: #6d28d9;
+  --color-primary-800: #5b21b6;
+  --color-primary-900: #4c1d95;
+  --color-primary-950: #2e1065;
+
+  /* Surface / พื้นหลัง */
+  --color-surface: #ffffff;
+  --color-surface-muted: #faf9ff;
+  --color-surface-sunken: #f4f2fb;
+
+  /* Text */
+  --color-ink: #1c1524;
+  --color-ink-muted: #5c5370;
+  --color-ink-subtle: #8c85a0;
+
+  /* Border */
+  --color-line: #e9e5f5;
+  --color-line-strong: #d9d2ee;
+
+  /* Typography */
+  --font-sans: 'Noto Sans Thai', 'IBM Plex Sans Thai', ui-sans-serif, system-ui,
+    -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace;
+
+  /* ความสูงของประวัติการเดิน 20 รายการ: 20 แถว × 1.75rem + ช่องไฟ 19 × 0.125rem */
+  --log-20-rows: 37.375rem;
+
+  /* Radius */
+  --radius-card: 1rem;
+
+  /* Shadow */
+  --shadow-soft: 0 1px 2px rgb(28 21 36 / 0.04), 0 8px 24px -12px rgb(124 58 237 / 0.18);
+  --shadow-lift: 0 2px 4px rgb(28 21 36 / 0.05), 0 18px 40px -18px rgb(124 58 237 / 0.35);
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-surface-muted text-ink font-sans antialiased;
+  }
+
+  ::selection {
+    @apply bg-primary-200 text-primary-900;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary-500;
+  }
+}
+
+/* Transition ของ page / layout (ผูกกับ nuxt.config.ts) */
+@layer components {
+  .page-enter-active,
+  .page-leave-active,
+  .layout-enter-active,
+  .layout-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+
+  .page-enter-from,
+  .page-leave-to,
+  .layout-enter-from,
+  .layout-leave-to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}

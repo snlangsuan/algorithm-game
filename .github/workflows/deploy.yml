@@ -1,0 +1,65 @@
+# ปล่อยหน้าเว็บขึ้น GitHub Pages ทุกครั้งที่ push เข้า main
+#
+# แอปเป็น SPA ล้วน (ssr: false ใน nuxt.config.ts) จึงใช้ `nuxt generate` กับพรีเซ็ต github-pages
+# พรีเซ็ตนั้นทำสองอย่างที่ Pages ต้องการ: เขียนไฟล์ .nojekyll (ไม่งั้นโฟลเดอร์ _nuxt ถูก Jekyll ซ่อน)
+# และสร้าง 404.html ให้ — เป็นตัวเดียวกับ index.html ผู้ใช้ที่เปิด /maze ตรง ๆ จึงไม่เจอหน้า 404 ของ GitHub
+#
+# เว็บที่อยู่ใต้ชื่อโปรเจกต์ (user.github.io/ชื่อ-repo) ต้องรู้ base path ตั้งแต่ตอน build
+# configure-pages บอกค่านั้นมาให้ ส่งต่อเป็น NUXT_APP_BASE_URL ก็ย้าย repo กี่ครั้งก็ไม่ต้องแก้ไฟล์นี้
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# ปล่อยทีละรอบ แต่ไม่ล้มรอบที่กำลังปล่อยอยู่กลางทาง
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # ชุดเทสต์รันด้วย node --test และ esbuild ที่ target node22
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # เทสต์ก่อนปล่อย — ตกเมื่อไรก็ไม่ต้องปล่อยของเสียขึ้นไป
+      - run: npm test
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Build static site
+        run: npx nuxt generate
+        env:
+          NITRO_PRESET: github-pages
+          # "" สำหรับ user/org page, "/ชื่อ-repo" สำหรับ project page — เติม / ปิดท้ายให้ Nuxt เสมอ
+          NUXT_APP_BASE_URL: ${{ steps.pages.outputs.base_path }}/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .output/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
