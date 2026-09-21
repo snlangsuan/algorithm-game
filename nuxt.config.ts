@@ -10,6 +10,13 @@ import tailwindcss from '@tailwindcss/vite'
 const base = process.env.NUXT_APP_BASE_URL || '/'
 const fromPublic = (name: string) => `${base.replace(/\/+$/, '')}/${name}`
 
+/**
+ * โดเมนของเว็บที่ขึ้นจริง — ภาพพรีวิวตอนแชร์ลิงก์ต้องเป็นที่อยู่เต็ม ที่อยู่แบบสัมพัทธ์ใช้ไม่ได้
+ * เพราะบอทของ Facebook/LINE/X อ่านแค่แท็กใน HTML ไม่ได้รู้ว่าหน้านั้นอยู่ที่ไหน
+ */
+const origin = process.env.NUXT_SITE_ORIGIN || 'https://snlangsuan.github.io'
+const shareImage = `${origin}${fromPublic('og-image.png')}`
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
@@ -35,7 +42,18 @@ export default defineNuxtConfig({
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
         { name: 'description', content: 'เกมฝึกคิดเชิงอัลกอริทึม' },
         { name: 'color-scheme', content: 'light' },
-        { name: 'theme-color', content: '#7c3aed' }
+        { name: 'theme-color', content: '#7c3aed' },
+        // ภาพและข้อความตอนแชร์ลิงก์ลงโซเชียล (ต้นฉบับภาพสร้างจาก HTML ขนาด 1200×630)
+        { property: 'og:type', content: 'website' },
+        { property: 'og:site_name', content: 'Algorithm Game' },
+        { property: 'og:title', content: 'Algorithm Game — ต่อบล็อกให้บอทเล่นเกมเอง' },
+        { property: 'og:description', content: 'ลากบล็อกมาต่อเป็นวิธีคิดของบอท แล้วกดรันดูมันเล่นเขาวงกต Othello ไล่จับ และอีกหลายเกม' },
+        { property: 'og:image', content: shareImage },
+        { property: 'og:image:width', content: '1200' },
+        { property: 'og:image:height', content: '630' },
+        { property: 'og:image:alt', content: 'เขียนโปรแกรมให้บอทด้วยการต่อบล็อก' },
+        { name: 'twitter:card', content: 'summary_large_image' },
+        { name: 'twitter:image', content: shareImage }
       ],
       link: [
         // SVG ให้เบราว์เซอร์รุ่นใหม่ (คมทุกขนาด) ส่วน .ico เป็นตัวสำรอง
