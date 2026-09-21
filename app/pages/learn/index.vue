@@ -7,7 +7,6 @@ useSeoMeta({
     'อัลกอริทึมที่อยู่เบื้องหลังเกมนี้ — เลาะกำแพง, โลภ, GA, DFS, BFS, Dijkstra, A*, minimax พร้อมบล็อกอธิบายการทำงาน'
 })
 
-// กลุ่มที่ไม่มีหัวข้อแล้วไม่ต้องโชว์ — ของที่เคย "ยังต่อไม่ได้" ทยอยย้ายมาเป็นบล็อกได้หมด
 const groups = GROUP_ORDER.map((group) => ({
   id: group,
   label: GROUP_LABEL[group],

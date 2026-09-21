@@ -1,14 +1,12 @@
-/**
- * บล็อกตัวอย่างสำหรับหน้าความรู้ — อธิบายอัลกอริทึมด้วยภาษาภาพเดียวกับในเกม
- *
- * หัวข้อกลุ่ม blocks ใช้ตัวอย่างจริงจาก pack ได้เลย
- * ส่วนหัวข้อที่ยังต่อด้วยบล็อกไม่ได้ ประกอบขึ้นมาให้ดูโครง
- * โดยส่วนที่ยังไม่มีบล็อกรองรับจะเป็นบล็อก "โค้ดของฉัน" — ซึ่งตรงกับความจริงพอดี
- * ว่าถ้าจะทำตอนนี้ต้องเขียนส่วนนั้นเป็นโค้ดเอง
- */
+import type { TopicPreset } from '~/data/algorithms'
 import { normalize, type BlockPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import type { BlockNode } from '~/game/blocks/types'
+import { CHASE_PACK } from '~/game/chase/blocks/pack'
+import { DINO_PACK } from '~/game/dino/blocks/pack'
+import { RUNNER_PACK } from '~/game/chase/blocks/runner'
+import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
+import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
@@ -24,7 +22,6 @@ function make(kind: string, fields: Fields = {}, inputs: Inputs = {}, bodies: Bo
   return node
 }
 
-/** ส่วนที่ยังไม่มีบล็อกรองรับ — โชว์เป็นบล็อกโค้ดดิบ */
 const code = (text: string) => make('raw-code', { code: text })
 const expr = (text: string) => make('raw-value', { code: text })
 
@@ -34,7 +31,7 @@ const ifDo = (cond: BlockNode, body: BlockNode[]) => make('if', {}, { cond }, { 
 interface Demo {
   pack: BlockPack
   program: BlockProgram
-  /** คำอธิบายสั้น ๆ ใต้บล็อก */
+
   note: string
 }
 
@@ -50,7 +47,6 @@ const othelloDemo = (name: string, blocks: BlockNode[], note: string): Demo => (
   note
 })
 
-/** โครงของอัลกอริทึมค้นหาที่ต่างกันแค่ "หยิบตัวไหนออกมาก่อน" */
 function frontierDemo(name: string, take: string, add: string, note: string) {
   return mazeDemo(
     name,
@@ -130,10 +126,22 @@ const DEMOS: Record<string, () => Demo> = {
     )
 }
 
-/** บล็อกตัวอย่างของหัวข้อนี้ — ตัวอย่างจริงจาก pack หรือบล็อกอธิบายที่ประกอบขึ้น */
-export function demoFor(slug: string, preset?: { game: 'maze' | 'othello'; id: string }): Demo | null {
+/** pack ของเกมนั้น — เกมใหม่เติมที่นี่ที่เดียว */
+const PACK_OF: Record<string, BlockPack> = {
+  maze: MAZE_PACK,
+  chase: CHASE_PACK,
+  runner: RUNNER_PACK,
+  othello: OTHELLO_PACK,
+  hanoi: HANOI_PACK,
+  dino: DINO_PACK,
+  line: LINE_PACK
+}
+
+export function demoFor(slug: string, preset?: TopicPreset): Demo | null {
   if (preset) {
-    const pack = preset.game === 'maze' ? MAZE_PACK : OTHELLO_PACK
+    const pack = PACK_OF[preset.game]
+    if (!pack) return null
+
     const found = pack.presets.find((item) => item.id === preset.id)
     if (!found) return null
 

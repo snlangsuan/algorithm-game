@@ -5,7 +5,7 @@ import type { SideConfig } from '~/composables/useOthelloGame'
 const props = defineProps<{
   player: Player
   config: SideConfig
-  /** ชื่อโปรแกรมที่ฝั่งนี้ใช้อยู่ */
+
   name: string
   active: boolean
   thinking: boolean

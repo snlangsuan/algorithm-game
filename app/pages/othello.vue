@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { BLACK, WHITE, type Player } from '~/game/othello/engine'
-import type { SideKind } from '~/composables/useOthelloGame'
 
 definePageMeta({ layout: false })
 
@@ -30,7 +29,6 @@ const blocksOpen = computed({
   }
 })
 
-/** ฝั่งที่กำลังแก้บล็อกอยู่ */
 const blockSide = computed(() => (editingBlocks.value ? game.blocks[editingBlocks.value] : null))
 
 const editingCode = computed({
@@ -43,7 +41,6 @@ const editingCode = computed({
 const locked = computed(() => game.status.value !== 'setup' || game.training.running)
 const trainingOpen = ref(false)
 
-/** เปิดหน้าต่างฝึกโดยเจาะจงสีหมาก — ฝึกทีละฝั่ง คู่ซ้อมจะได้นิ่ง */
 function openTraining(player: Player) {
   focus(player)
   trainFocus.value = player
@@ -55,12 +52,10 @@ const canTrain = computed(
   () => game.sides[BLACK].kind === 'code' && game.sides[WHITE].kind === 'code'
 )
 
-/** ฝั่งที่เล่นด้วยโปรแกรม — ใช้เลือกว่าจะโชว์โปรแกรมของใครบ้าง */
 const codeSides = computed(() =>
   ([BLACK, WHITE] as Player[]).filter((player) => game.sides[player].kind === 'code')
 )
 
-/** ฝั่งที่กำลังดูโปรแกรมอยู่ในคอลัมน์กลาง */
 const viewing = ref<Player>(BLACK)
 
 watch(
@@ -73,33 +68,23 @@ watch(
 
 const shown = computed(() => (codeSides.value.includes(viewing.value) ? viewing.value : null))
 
-/** แก้โปรแกรมฝั่งไหน ก็เลื่อนคอลัมน์กลางไปโชว์ฝั่งนั้นให้ */
 function focus(player: Player) {
   viewing.value = player
 }
 
 const sideLabel = (player: Player) => (player === BLACK ? 'ดำ' : 'ขาว')
 
-/** ฝั่งไหนมีโปรแกรมที่จำอะไรข้ามเกมได้ — ใช้ตัดสินว่าปุ่มควรเขียนว่า "ฝึก" หรือ "ประลอง" */
 const learners = computed(
   () => ({ [BLACK]: game.learns(BLACK), [WHITE]: game.learns(WHITE) }) as Record<Player, boolean>
 )
 
-
-/** ชื่อโปรแกรมที่แต่ละฝั่งใช้อยู่จริง (บล็อกหรือโค้ด) */
 const names = computed(
   () => ({ [BLACK]: game.nameOf(BLACK), [WHITE]: game.nameOf(WHITE) }) as Record<Player, string>
 )
 
-/** ปุ่มแก้ที่หัวโปรแกรม — เปิดตัวแก้ให้ตรงกับโหมดของฝั่งนั้น */
 function edit(player: Player) {
   if (game.sides[player].author === 'blocks') editingBlocks.value = player
   else editing.value = player
-}
-
-function applyPreset(black: SideKind, white: SideKind) {
-  game.setSide(BLACK, { kind: black })
-  game.setSide(WHITE, { kind: white })
 }
 
 async function start() {
@@ -115,7 +100,6 @@ async function start() {
 <template>
   <NuxtLayout name="game" title="Othello 8×8">
     <GameStage>
-      <!-- ข้างซ้าย: ประวัติการเดิน -->
       <template #aside>
         <div class="flex flex-col rounded-card border border-line bg-surface p-3 shadow-soft">
           <div class="mb-2 flex shrink-0 items-baseline justify-between px-1">
@@ -127,7 +111,6 @@ async function start() {
         </div>
       </template>
 
-      <!-- สนามเล่น -->
       <template #stage>
         <OthelloScoreboard
           :sides="game.sides"
@@ -180,7 +163,6 @@ async function start() {
         </p>
       </template>
 
-      <!-- โปรแกรมของฝั่งที่เลือกดู -->
       <template #program>
         <BlockWorkspace
           v-if="shown"
@@ -200,7 +182,6 @@ async function start() {
           @edit="edit(shown)"
           @clear-logs="game.clearLogs(shown)"
         >
-          <!-- มีสองฝั่ง เลือกได้ว่าจะดูโปรแกรมของใคร -->
           <template v-if="codeSides.length > 1" #header>
             <div class="flex rounded-full bg-surface-sunken p-1">
               <button
@@ -237,7 +218,6 @@ async function start() {
         </p>
       </template>
 
-      <!-- แผงควบคุม -->
       <template #panel>
         <GamePanel>
           <template #summary>
@@ -252,13 +232,6 @@ async function start() {
           </template>
 
           <template #default>
-            <OthelloMatchPresets
-              :black="game.sides[BLACK].kind"
-              :white="game.sides[WHITE].kind"
-              :disabled="locked"
-              @select="applyPreset"
-            />
-
             <OthelloSideConfig
               v-for="side in [BLACK, WHITE]"
               :key="side"
@@ -292,7 +265,6 @@ async function start() {
       </template>
 
       <template #panel-extra>
-        <!-- จอเล็ก: โปรแกรมอยู่ใต้แผงควบคุมแทนคอลัมน์กลางที่ถูกซ่อน -->
         <BlockWorkspace
           v-for="player in codeSides"
           :key="player"
@@ -327,7 +299,6 @@ async function start() {
           </template>
         </BlockWorkspace>
 
-        <!-- จอเล็ก: ประวัติอยู่ท้ายสุดแทนคอลัมน์ซ้าย -->
         <div class="mt-4 rounded-card border border-line bg-surface p-3 shadow-soft lg:hidden">
           <div class="mb-2 flex items-baseline justify-between px-1">
             <h2 class="text-xs font-semibold text-ink">ประวัติการเดิน</h2>
@@ -364,6 +335,9 @@ async function start() {
       @preset="blockSide.usePreset"
       @rename="blockSide.rename"
       @clone="blockSide.cloneForEditing"
+      @create="blockSide.newProgram"
+      @load="blockSide.loadProgram"
+      @remove="blockSide.removeProgram()"
     />
 
   </NuxtLayout>

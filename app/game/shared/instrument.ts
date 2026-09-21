@@ -1,20 +1,8 @@
-import { parse } from 'acorn'
-import type { Node } from 'acorn'
+import { parse, type Node } from 'acorn'
 
-/**
- * แทรกตัวนับบรรทัดลงในโค้ดของผู้เล่น เพื่อให้หน้าจอบอกได้ว่ากำลังรันบรรทัดไหน
- *
- * แทรกเฉพาะ "หน้าคำสั่งที่อยู่ในบล็อก" เท่านั้น (body ของ Program / { ... } / case)
- * ตำแหน่งพวกนี้แทรกคำสั่งเพิ่มได้เสมอโดยไม่เปลี่ยนความหมายของโค้ด
- * ส่วนที่แทรกไม่ได้ เช่น `if (x)` ที่ไม่มีปีกกา หรือกลางนิพจน์ จะถูกข้ามไป
- *
- * ตัวมาร์กเกอร์ไม่มีการขึ้นบรรทัดใหม่ เลขบรรทัดจึงตรงกับโค้ดต้นฉบับที่ผู้เล่นเห็น
- */
 export interface Instrumented {
   code: string
-  /** แทรกสำเร็จไหม — ถ้าโค้ดมี syntax error จะคืนโค้ดเดิมและ ok = false */
   ok: boolean
-  /** บรรทัดที่มีมาร์กเกอร์ ใช้บอกหน้าจอว่าบรรทัดไหน "นับได้" */
   lines: number[]
 }
 
@@ -25,10 +13,32 @@ interface Mark {
 
 const STATEMENT = /(?:Statement|Declaration)$/
 
-/** ไล่เก็บตำแหน่งเริ่มต้นของทุกคำสั่งที่อยู่ในบล็อก */
+type AstNode = Node & Record<string, unknown>
+
+const SKIP_KEYS = new Set(['loc', 'range', 'parent'])
+
+function blockLists(node: AstNode): unknown[] {
+  if (node.type === 'Program' || node.type === 'BlockStatement' || node.type === 'StaticBlock') {
+    return [node.body]
+  }
+
+  if (node.type === 'SwitchCase') return [node.consequent]
+  return []
+}
+
+function markStatements(block: unknown, marks: Mark[]): void {
+  if (!Array.isArray(block)) return
+
+  for (const item of block) {
+    const statement = item as Node | undefined
+    if (!statement?.loc || !STATEMENT.test(statement.type)) continue
+
+    marks.push({ index: statement.start, line: statement.loc.start.line })
+  }
+}
+
 function collect(node: unknown, marks: Mark[], seen: Set<unknown>): void {
-  if (!node || typeof node !== 'object') return
-  if (seen.has(node)) return
+  if (!node || typeof node !== 'object' || seen.has(node)) return
   seen.add(node)
 
   if (Array.isArray(node)) {
@@ -36,32 +46,13 @@ function collect(node: unknown, marks: Mark[], seen: Set<unknown>): void {
     return
   }
 
-  const current = node as Node & Record<string, unknown>
+  const current = node as AstNode
   if (typeof current.type !== 'string') return
 
-  // body ของ Program / BlockStatement / StaticBlock และ consequent ของ case
-  const blocks: unknown[] = []
-  if (current.type === 'Program' || current.type === 'BlockStatement' || current.type === 'StaticBlock') {
-    blocks.push(current.body)
-  } else if (current.type === 'SwitchCase') {
-    blocks.push(current.consequent)
-  }
-
-  for (const block of blocks) {
-    if (!Array.isArray(block)) continue
-
-    for (const item of block) {
-      const statement = item as Node | undefined
-      if (!statement || !STATEMENT.test(statement.type)) continue
-      if (!statement.loc) continue
-
-      marks.push({ index: statement.start, line: statement.loc.start.line })
-    }
-  }
+  for (const block of blockLists(current)) markStatements(block, marks)
 
   for (const key of Object.keys(current)) {
-    if (key === 'loc' || key === 'range' || key === 'parent') continue
-    collect(current[key], marks, seen)
+    if (!SKIP_KEYS.has(key)) collect(current[key], marks, seen)
   }
 }
 
@@ -79,7 +70,6 @@ export function instrument(source: string, marker: string): Instrumented {
 
     if (marks.length === 0) return { code: source, ok: true, lines: [] }
 
-    // แทรกจากท้ายไปหน้า ตำแหน่งที่ยังไม่ได้แทรกจะได้ไม่เลื่อน
     marks.sort((a, b) => b.index - a.index)
 
     let code = source
@@ -92,7 +82,6 @@ export function instrument(source: string, marker: string): Instrumented {
 
     return { code, ok: true, lines: [...lines].sort((a, b) => a - b) }
   } catch {
-    // โค้ดผิดไวยากรณ์ — ปล่อยผ่านไปให้ new Function() เป็นคนฟ้อง จะได้ข้อความที่ผู้เล่นอ่านรู้เรื่องกว่า
     return { code: source, ok: false, lines: [] }
   }
 }

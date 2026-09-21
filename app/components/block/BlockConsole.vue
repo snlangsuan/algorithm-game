@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { LogLine } from '~/game/shared/console'
 
-/** แผงคอนโซล — ข้อความที่โปรแกรมของผู้เล่นพิมพ์ออกมา ใช้เหมือนกันทุกเกม */
 const props = withDefaults(defineProps<{ lines: LogLine[]; running?: boolean }>(), {
   running: false
 })
@@ -11,7 +10,6 @@ const emit = defineEmits<{ clear: [] }>()
 const scroller = ref<HTMLDivElement | null>(null)
 const open = ref(true)
 
-/** เลื่อนตามบรรทัดล่าสุดเสมอ */
 watch(
   () => props.lines.length,
   async () => {

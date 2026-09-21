@@ -4,14 +4,6 @@ import { createBlock } from '~/game/blocks/program'
 import { VARIABLES } from '~/game/blocks/core'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
 
-/**
- * บล็อกเฉพาะเกม Othello
- *
- * ระบบเรียกโปรแกรมนี้ทุกครั้งที่ถึงตาของฝั่งเรา
- * บล็อก "ลงหมาก" ตัวแรกที่ทำงานคือตาที่จะเดิน ถ้าไม่มีเลยระบบจะเลือกตาที่พลิกมากสุดให้
- */
-
-/** กลุ่มของตาที่ลงได้ */
 const SPOTS: SelectOption[] = [
   { value: 'any', label: 'ตาไหนก็ได้' },
   { value: 'corner', label: 'มุมกระดาน' },
@@ -20,7 +12,6 @@ const SPOTS: SelectOption[] = [
   { value: 'risky', label: 'ติดมุม (เสี่ยง)' }
 ]
 
-/** ถ้ามีหลายตาในกลุ่มเดียวกัน จะเลือกตัวไหน */
 const ORDERS: SelectOption[] = [
   { value: 'most', label: 'พลิกหมากได้มากที่สุด' },
   { value: 'least', label: 'พลิกหมากได้น้อยที่สุด' },
@@ -685,8 +676,6 @@ const HELPERS = `
     )[0]
   }`
 
-// ---------- ตัวอย่างสำเร็จรูป ----------
-
 function block(
   kind: string,
   fields: Record<string, string | number> = {},
@@ -709,7 +698,6 @@ const math = (op: string, left: BlockNode, right: BlockNode) => block('math', { 
 const compare = (left: BlockNode, op: string, right: BlockNode) =>
   block('compare', { op }, { left, right })
 
-/** ตัวจับคู่โค้ดกลับเป็นบล็อกของเกมนี้ */
 const STATEMENT_PARSERS: Matcher[] = [
   (node, ctx) => {
     const back = ctx.returned(node)
@@ -721,7 +709,6 @@ const STATEMENT_PARSERS: Matcher[] = [
     const slot = weights ? ctx.str(weights[0]!) : null
     if (slot) return ctx.make('othello.by-weights', { name: slot })
 
-    // this.search(<จำนวนรอบ>, () => { ... })
     const tree = ctx.call(back, 'search')
     if (tree) {
       const inner: Node[] = tree[1]?.body?.body ?? []
@@ -733,7 +720,6 @@ const STATEMENT_PARSERS: Matcher[] = [
       )
     }
 
-    // this.think(<ความลึก>, () => { ... }) — อาร์กิวเมนต์ตัวที่สองห่อบล็อกทั้งชุดไว้
     const deep = ctx.call(back, 'think')
     if (deep) {
       const inner: Node[] = deep[1]?.body?.body ?? []
@@ -753,7 +739,6 @@ const STATEMENT_PARSERS: Matcher[] = [
     return spot && order ? ctx.make('othello.place', { spot, order }) : null
   },
 
-  // for (const ตา of this.movesHere()) { this.focus(ตา); ... }
   (node, ctx) => {
     if (node.type !== 'ForOfStatement') return null
     if (!ctx.call(node.right, 'movesHere')) return null
@@ -765,14 +750,11 @@ const STATEMENT_PARSERS: Matcher[] = [
     return ctx.make('othello.each-move', {}, {}, { do: inner.flatMap((item) => ctx.body(item)) })
   },
 
-  // this.keep()
   (node, ctx) =>
     node.type === 'ExpressionStatement' && ctx.call(node.expression, 'keep')
       ? ctx.make('othello.keep-move')
       : null,
 
-
-  // return <คะแนน> — ต้องอยู่ท้ายสุด ไม่งั้นจะกิน return ของบล็อกลงหมากไปหมด
   (node, ctx) => {
     const back = ctx.returned(node)
     return back ? ctx.make('othello.answer', {}, { value: ctx.value(back) }) : null
@@ -817,13 +799,11 @@ const VALUE_PARSERS: Matcher[] = [
   }
 ]
 
-/** ตัดส่วนที่ระบบเติมให้ออก เหลือแค่โปรแกรมของผู้เล่น */
 function unwrap(statements: Node[], ctx: ParseContext): Node[] {
   const list = statements.filter(
     (node) => !(node.type === 'ExpressionStatement' && ctx.thisProp(node.expression?.left, 'here'))
   )
 
-  // ตาสำรองท้ายเมธอดที่ระบบเติมให้ ไม่ต้องเอามาเป็นบล็อก
   const last = list[list.length - 1]
   if (last?.type === 'ReturnStatement') {
     const args = ctx.call(last.argument, 'choose')
@@ -917,7 +897,7 @@ export const OTHELLO_PACK = createPack({
         name: 'กินเยอะสุด',
         scripts: {
           'othello.on-turn': [
-            // เริ่มที่ -1 เพราะตาที่ลงได้ต้องพลิกอย่างน้อยหนึ่งตัวเสมอ ตาแรกที่เจอจึงชนะแน่นอน
+
             block('set-var', { name: 'a' }, { value: number(-1) }),
             block(
               'othello.each-move',
@@ -992,7 +972,7 @@ export const OTHELLO_PACK = createPack({
       build: (): BlockProgram => ({
         name: 'วิวัฒนาการ (GA)',
         scripts: {
-          // เริ่มเกม: เอาแชมป์ที่จำไว้มาใช้ ถ้ายังไม่มีก็สุ่มใหม่ แล้วกลายพันธุ์เล็กน้อย
+
           'othello.on-start': [
             block('set-var', { name: 'a' }, { value: block('recall', { slot: 'a' }) }),
             block(
@@ -1017,29 +997,21 @@ export const OTHELLO_PACK = createPack({
                 ]
               }
             ),
-            block(
-              'repeat',
-              { times: 6 },
-              {},
-              {
-                do: [
-                  block(
-                    'list-put',
-                    { name: 'a' },
-                    { index: random(1, 64), value: random(0, 20) }
-                  )
-                ]
-              }
-            )
+            // กลายพันธุ์ช่องเดียวต่อเกม — วัดจริงแล้วแก้ทีละ 6 ช่องทำให้ของดีที่สะสมมาพังทุกเกม
+            // จนเทรนเพิ่มเท่าไรก็ไม่เก่งขึ้น (ชนะ 'ยึดมุม' ค้างที่ราว 30%) แก้ทีละช่องขึ้นไปถึงราว 79%
+            block('list-put', { name: 'a' }, { index: random(1, 64), value: random(0, 20) })
           ],
 
-          // ถึงตาเรา: ลงตาที่ทำให้กระดานได้คะแนนตามน้ำหนักสูงสุด
           'othello.on-turn': [block('othello.by-weights', { name: 'a' })],
 
-          // จบเกม: ทำคะแนนดีกว่าแชมป์เดิมเมื่อไร ค่อยยึดชุดน้ำหนักนี้เป็นแชมป์แทน
+          // ไม่มีใครชนะบาร์ ก็ลดบาร์ลงทีละแต้ม
+          //
+          // บาร์ที่ขึ้นอย่างเดียวจะค้างถาวร พอเคยฟลุกทำคะแนนสูงไว้ครั้งเดียว
+          // (เช่นตอนซ้อมกับคู่ที่อ่อนกว่า) แชมป์ก็จะไม่มีวันถูกแทนอีกเลย ซ้อมต่อกี่ร้อยเกมก็เท่าเดิม
+          // ปล่อยให้บาร์ไหลลงได้ มันจะปรับตัวเองไปหาระดับคะแนนของคู่ซ้อมตรงหน้า
           'othello.on-end': [
             block(
-              'if',
+              'if-else',
               {},
               {
                 cond: block(
@@ -1052,6 +1024,13 @@ export const OTHELLO_PACK = createPack({
                 then: [
                   block('remember', { slot: 'a' }, { value: readVar('a') }),
                   block('remember', { slot: 'b' }, { value: block('othello.score', { who: 'me' }) })
+                ],
+                else: [
+                  block(
+                    'remember',
+                    { slot: 'b' },
+                    { value: math('sub', block('recall', { slot: 'b' }), number(1)) }
+                  )
                 ]
               }
             )
@@ -1074,14 +1053,13 @@ export const OTHELLO_PACK = createPack({
             { depth: number(4) },
             {
               do: [
-                // ถึงชั้นล่างสุดแล้วค่อยให้คะแนน — นี่คือส่วนเดียวที่ต้องรู้จักเกม
-                // สูตรนี้วัดแล้วชนะ "ยึดมุมก่อน" 32 จาก 40 เกม
+
                 block(
                   'if',
                   {},
                   { cond: block('othello.deepest') },
                   {
-                    // คิดทีละขั้นด้วยตัวแปร ค แทนการซ้อนนิพจน์ — ซ้อนเกินสองชั้นแล้วอ่านไม่ออก
+
                     then: [
                       block(
                         'set-var',
@@ -1109,7 +1087,7 @@ export const OTHELLO_PACK = createPack({
                     ]
                   }
                 ),
-                // ชั้นของเราเริ่มจากแย่สุดแล้วไล่หาค่ามากขึ้น ชั้นคู่แข่งกลับกัน
+
                 block(
                   'if-else',
                   {},
@@ -1125,14 +1103,14 @@ export const OTHELLO_PACK = createPack({
                   {},
                   {
                     do: [
-                      // สมมติลงตานี้แล้วให้บล็อกชุดเดิมคิดต่ออีกชั้น ค่าที่ได้คือคะแนนของกิ่งนั้น
+
                       block('set-var', { name: 'b' }, { value: block('othello.deeper') }),
                       block(
                         'if-else',
                         {},
                         { cond: block('othello.my-turn') },
                         {
-                          // ชั้นของเราเก็บค่ามากสุด ชั้นของคู่แข่งเก็บค่าน้อยสุด
+
                           then: [
                             block(
                               'if',
@@ -1177,14 +1155,14 @@ export const OTHELLO_PACK = createPack({
             { rounds: number(300) },
             {
               do: [
-                // กิ่งที่ยังไม่เคยลอง ต้องได้ลองก่อนเสมอ ไม่งั้นจะติดอยู่กับกิ่งแรกที่บังเอิญชนะ
+
                 block(
                   'if',
                   {},
                   { cond: compare(block('othello.branch-plays'), 'lt', number(1)) },
                   { then: [block('othello.answer', {}, { value: number(999) })] }
                 ),
-                // ก = อัตราชนะที่วัดมาแล้ว
+
                 block(
                   'set-var',
                   { name: 'a' },
@@ -1196,7 +1174,7 @@ export const OTHELLO_PACK = createPack({
                     )
                   }
                 ),
-                // ข = โบนัสของกิ่งที่ยังถูกลองน้อย ยิ่งลองน้อยยิ่งได้มาก
+
                 block(
                   'set-var',
                   { name: 'b' },

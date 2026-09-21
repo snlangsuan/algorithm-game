@@ -11,13 +11,13 @@ import type {
 } from './protocol'
 
 export interface RunnerOptions {
-  /** เวลาสูงสุดต่อการเรียกหนึ่งครั้ง (ms) — เกินแล้วจะฆ่า worker ทิ้ง */
+
   timeoutMs?: number
-  /** เรียกเป็นระยะระหว่างที่ agent คิด บอกว่ากำลังรันเมธอดไหน */
+
   onTrace?: (tick: TraceTick) => void
-  /** เรียกครั้งเดียวหลังคิดจบ พร้อมสรุปจำนวนครั้งที่เรียกแต่ละเมธอด */
+
   onSummary?: (summary: TraceSummary) => void
-  /** เรียกเมื่อโปรแกรมพิมพ์ข้อความออกคอนโซล */
+
   onLog?: (lines: LogLine[]) => void
 }
 
@@ -33,7 +33,6 @@ export interface StepOutcome {
   timeline: number[]
 }
 
-/** ผลการโหลดโค้ด — traced = แทรกตัวนับบรรทัดสำเร็จ หน้าจอจึงไฮไลต์บรรทัดได้ */
 export interface AgentReady {
   name: string
   mode: AgentMode
@@ -46,10 +45,6 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>
 }
 
-/**
- * ตัวรันโค้ดของผู้เล่นใน Web Worker
- * แยกสโคปออกจากหน้าเว็บ และตัดจบได้ถ้าโค้ดวนไม่รู้จบ
- */
 export class MazeRunner {
   private worker: Worker | null = null
   private pending = new Map<number, Pending>()
@@ -73,12 +68,10 @@ export class MazeRunner {
     return this.agentName
   }
 
-  /** 'plan' = คิดทั้งเส้นทางทีเดียว, 'step' = เดินทีละก้าว */
   get mode(): AgentMode {
     return this.agentMode
   }
 
-  /** ไฮไลต์บรรทัดได้ไหม */
   get traced(): boolean {
     return this.agentTraced
   }
@@ -87,7 +80,6 @@ export class MazeRunner {
     return this.worker !== null
   }
 
-  /** สร้าง worker แล้วโหลดโค้ด — คืนชื่อ agent กับโหมดที่ใช้ ถ้าโหลดผ่าน */
   start(): Promise<AgentReady> {
     this.dispose()
 
@@ -129,7 +121,13 @@ export class MazeRunner {
         }
       }
 
-      const onError = (event: ErrorEvent) => settle(new Error(event.message || 'โค้ดมีข้อผิดพลาด'))
+      /*
+       * ErrorEvent ที่ไม่มีข้อความติดมา มักไม่ใช่ความผิดของโปรแกรมที่ผู้เล่นต่อไว้
+       * แต่คือตัวรันโหลดไม่ขึ้นเอง เช่น dev server เพิ่งคอมไพล์ใหม่แล้วไฟล์ worker หลุดไปชั่วครู่
+       * บอกให้ตรงตัว จะได้ไม่ไปนั่งไล่แก้บล็อกที่ไม่ได้ผิดอะไรเลย
+       */
+      const onError = (event: ErrorEvent) =>
+        settle(new Error(event.message || 'โหลดตัวรันโค้ดไม่สำเร็จ — ลองรีเฟรชหน้าหนึ่งครั้งแล้วกดใหม่'))
 
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
@@ -137,12 +135,10 @@ export class MazeRunner {
     })
   }
 
-  /** ขอเส้นทางทั้งเส้น (โหมด plan) */
   solve(state: MazeState): Promise<PlanResult> {
     return this.ask((id) => ({ type: 'solve', id, state })) as Promise<PlanResult>
   }
 
-  /** ขอก้าวถัดไป (โหมด step) */
   step(state: MazeState): Promise<StepOutcome> {
     return this.ask((id) => ({ type: 'step', id, state })) as Promise<StepOutcome>
   }

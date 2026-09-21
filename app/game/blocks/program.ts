@@ -5,7 +5,6 @@ let counter = 0
 
 export const nextId = (): BlockId => `b${(++counter).toString(36)}${Date.now().toString(36).slice(-3)}`
 
-/** สร้างบล็อกใหม่จากชนิด พร้อมค่าเริ่มต้นของทุกช่อง */
 export function createBlock(kind: string): BlockNode {
   const spec = findSpec(kind)
   if (!spec) throw new Error(`ไม่รู้จักบล็อก "${kind}"`)
@@ -23,7 +22,6 @@ export function createBlock(kind: string): BlockNode {
   return node
 }
 
-/** สำเนาแบบลึกพร้อมแจก id ใหม่ทั้งต้น */
 export function cloneBlock(node: BlockNode): BlockNode {
   return {
     id: nextId(),
@@ -45,80 +43,100 @@ export const cloneProgram = (program: BlockProgram): BlockProgram => ({
   )
 })
 
-/** ลำดับคำสั่งของทุกหัวบล็อกในโปรแกรม */
 export const allScripts = (program: BlockProgram): BlockNode[][] => Object.values(program.scripts)
 
-export function findBlock(program: BlockProgram, id: BlockId): BlockNode | null {
-  const walk = (list: BlockNode[]): BlockNode | null => {
-    for (const node of list) {
-      if (node.id === id) return node
+function findInInputs(node: BlockNode, id: BlockId): BlockNode | null {
+  for (const child of Object.values(node.inputs)) {
+    if (!child) continue
+    if (child.id === id) return child
 
-      for (const child of Object.values(node.inputs)) {
-        if (!child) continue
-        if (child.id === id) return child
-        const found = walk([child])
-        if (found) return found
-      }
-
-      for (const body of Object.values(node.bodies)) {
-        const found = walk(body)
-        if (found) return found
-      }
-    }
-
-    return null
-  }
-
-  for (const script of allScripts(program)) {
-    const found = walk(script)
+    const found = findInList([child], id)
     if (found) return found
   }
 
   return null
 }
 
-/** ลิสต์คำสั่งที่ตำแหน่งนั้น — parent = null คือใต้หัวบล็อกชื่อ name */
+function findInBodies(node: BlockNode, id: BlockId): BlockNode | null {
+  for (const body of Object.values(node.bodies)) {
+    const found = findInList(body, id)
+    if (found) return found
+  }
+
+  return null
+}
+
+function findInList(list: BlockNode[], id: BlockId): BlockNode | null {
+  for (const node of list) {
+    if (node.id === id) return node
+
+    const found = findInInputs(node, id) ?? findInBodies(node, id)
+    if (found) return found
+  }
+
+  return null
+}
+
+export function findBlock(program: BlockProgram, id: BlockId): BlockNode | null {
+  for (const script of allScripts(program)) {
+    const found = findInList(script, id)
+    if (found) return found
+  }
+
+  return null
+}
+
 export function bodyOf(program: BlockProgram, parent: BlockId | null, name: string): BlockNode[] | null {
   if (parent === null) return program.scripts[name] ?? null
   return findBlock(program, parent)?.bodies[name] ?? null
 }
 
-/** ถอดบล็อกออกจากต้นไม้ คืนตัวที่ถอดได้ */
-export function detach(program: BlockProgram, id: BlockId): BlockNode | null {
-  const fromList = (list: BlockNode[]): BlockNode | null => {
-    const index = list.findIndex((node) => node.id === id)
-    if (index >= 0) return list.splice(index, 1)[0] ?? null
-
-    for (const node of list) {
-      for (const [key, child] of Object.entries(node.inputs)) {
-        if (child?.id === id) {
-          node.inputs[key] = null
-          return child
-        }
-        if (child) {
-          const found = fromList([child])
-          if (found) return found
-        }
-      }
-
-      for (const body of Object.values(node.bodies)) {
-        const found = fromList(body)
-        if (found) return found
-      }
+function detachFromInputs(node: BlockNode, id: BlockId): BlockNode | null {
+  for (const [key, child] of Object.entries(node.inputs)) {
+    if (child?.id === id) {
+      node.inputs[key] = null
+      return child
     }
 
-    return null
+    if (child) {
+      const found = detachFromList([child], id)
+      if (found) return found
+    }
   }
 
-  for (const script of allScripts(program)) {
-    const found = fromList(script)
+  return null
+}
+
+function detachFromBodies(node: BlockNode, id: BlockId): BlockNode | null {
+  for (const body of Object.values(node.bodies)) {
+    const found = detachFromList(body, id)
     if (found) return found
   }
 
   return null
 }
 
-/** บล็อกนี้มี id นั้นอยู่ข้างในไหม — กันลากบล็อกไปหย่อนใส่ตัวเอง */
+function detachFromList(list: BlockNode[], id: BlockId): BlockNode | null {
+  const index = list.findIndex((node) => node.id === id)
+  if (index >= 0) return list.splice(index, 1)[0] ?? null
+
+  for (const node of list) {
+    const found = detachFromInputs(node, id) ?? detachFromBodies(node, id)
+    if (found) return found
+  }
+
+  return null
+}
+
+export function detach(program: BlockProgram, id: BlockId): BlockNode | null {
+  for (const script of allScripts(program)) {
+    const found = detachFromList(script, id)
+    if (found) return found
+  }
+
+  return null
+}
+
 export function contains(node: BlockNode, id: BlockId): boolean {
   if (node.id === id) return true
 
@@ -157,7 +175,6 @@ export function setInput(
   return true
 }
 
-/** ตำแหน่งของคำสั่งในต้นไม้ — ใช้ตอนย้ายที่ */
 export function locate(
   program: BlockProgram,
   id: BlockId
@@ -188,7 +205,6 @@ export function locate(
   return null
 }
 
-/** โปรแกรมนี้มีบล็อกชนิดใดชนิดหนึ่งในรายการอยู่ไหม */
 export function usesBlock(program: BlockProgram, kinds: string[]): boolean {
   const wanted = new Set(kinds)
 
@@ -203,7 +219,6 @@ export function usesBlock(program: BlockProgram, kinds: string[]): boolean {
   return allScripts(program).some(scan)
 }
 
-/** นับบล็อกทั้งโปรแกรม (ทุกหัวบล็อกรวมกัน) */
 export const countProgram = (program: BlockProgram): number =>
   allScripts(program).reduce((total, script) => total + countBlocks(script), 0)
 

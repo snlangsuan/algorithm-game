@@ -3,14 +3,6 @@ import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
 
-/**
- * บล็อกเฉพาะเกมเขาวงกต
- *
- * ระบบเรียกโปรแกรมนี้ทุกตา บล็อกเดินตัวแรกที่ทำงานคือก้าวของตานั้น
- * บล็อกหันไม่นับเป็นก้าว โปรแกรมจึงถูกวนอ่านซ้ำจนกว่าจะเจอบล็อกเดินจริง
- */
-
-/** ทิศแบบอิงตัวเรา (หน้า/หลัง/ซ้ายมือ/ขวามือ) กับทิศตายตัวบนแผนที่ */
 const SIDES: SelectOption[] = [
   { value: 'ahead', label: 'ข้างหน้า' },
   { value: 'hand-right', label: 'ทางขวามือ' },
@@ -45,10 +37,6 @@ const HAT: BlockSpec = {
   emit: () => {}
 }
 
-/**
- * หัวบล็อกที่สอง — วางแผนทั้งเส้นทางทีเดียวก่อนออกเดิน
- * ต่างจาก "เมื่อถึงตาเดิน" ตรงที่เห็นแผนที่ทั้งใบ จึงทำ BFS / Dijkstra / A* ได้
- */
 const PLAN_HAT: BlockSpec = {
   kind: 'maze.on-plan',
   shape: 'hat',
@@ -59,10 +47,6 @@ const PLAN_HAT: BlockSpec = {
   emit: () => {}
 }
 
-/**
- * บล็อกวางแผนเส้นทาง — ทุกตัวคุยกับคิวลำดับความสำคัญชุดเดียวที่ระบบเตรียมไว้ให้
- * BFS / Dijkstra / A* ใช้บล็อกชุดเดียวกันหมด ต่างกันแค่ค่าที่ใส่ในช่อง "ด้วยลำดับ"
- */
 const PLAN_BLOCKS: BlockSpec[] = [
   {
     kind: 'maze.plan-start',
@@ -340,7 +324,6 @@ const BLOCKS: BlockSpec[] = [
   }
 ]
 
-/** จำนวนรอบที่ยอมให้วนอ่านโปรแกรมซ้ำในหนึ่งตา ถ้ายังไม่เจอบล็อกเดิน */
 const RETRIES = 8
 
 const HELPERS = `
@@ -478,8 +461,6 @@ const HELPERS = `
     return goal.col > me.col
   }`
 
-// ---------- ตัวอย่างสำเร็จรูป ----------
-
 function block(
   kind: string,
   fields: Record<string, string | number> = {},
@@ -504,10 +485,6 @@ const footprints = (side: string) => block('maze.footprints', { side })
 const compare = (left: BlockNode, op: string, right: BlockNode) =>
   block('compare', { op }, { left, right })
 
-/**
- * โครงของอัลกอริทึมค้นหาเส้นทาง — BFS, Dijkstra และ A* ใช้โครงนี้เหมือนกันหมด
- * ต่างกันที่ `priority` ตัวเดียว ซึ่งคือค่าที่ใส่ในช่อง "ด้วยลำดับ" ของบล็อกใส่คิว
- */
 const planWith = (name: string, priority: BlockNode): BlockProgram => ({
   name,
   scripts: {
@@ -544,7 +521,6 @@ const planWith = (name: string, priority: BlockNode): BlockProgram => ({
   }
 })
 
-/** ถ้าทางนั้นรอยเท้าน้อยกว่าที่ดีที่สุดตอนนี้ ให้จำไว้ในตัวแปร ก และ ข */
 const keepIfFewer = (side: string, code: number) =>
   block(
     'if',
@@ -561,7 +537,6 @@ const keepIfFewer = (side: string, code: number) =>
 const turnIfChosen = (code: number, side: string) =>
   block('if', {}, { cond: compare(readVar('b'), 'eq', number(code)) }, { then: [turn(side)] })
 
-/** บล็อกวางแผนทุกตัวเป็นการเรียก this.planXxx() ตรง ๆ จึงจับคู่กลับได้ง่าย */
 const PLAN_STATEMENTS: Array<[string, string]> = [
   ['planStart', 'maze.plan-start'],
   ['planTake', 'maze.plan-take']
@@ -576,7 +551,6 @@ const PLAN_VALUES: Array<[string, string]> = [
   ['planLeft', 'maze.plan-left']
 ]
 
-/** ตัวจับคู่โค้ดกลับเป็นบล็อกของเกมนี้ — คู่กับ emit ของแต่ละบล็อกข้างบน */
 const STATEMENT_PARSERS: Matcher[] = [
   ...PLAN_STATEMENTS.map<Matcher>(
     ([name, kind]) =>
@@ -584,20 +558,17 @@ const STATEMENT_PARSERS: Matcher[] = [
         node.type === 'ExpressionStatement' && ctx.call(node.expression, name) ? ctx.make(kind) : null
   ),
 
-  // this.planPush(<ค่า>)
   (node, ctx) => {
     if (node.type !== 'ExpressionStatement') return null
     const args = ctx.call(node.expression, 'planPush')
     return args ? ctx.make('maze.plan-push', {}, { priority: ctx.value(args[0]!) }) : null
   },
 
-  // return this.planAnswer()
   (node, ctx) => {
     const back = ctx.returned(node)
     return back && ctx.call(back, 'planAnswer') ? ctx.make('maze.plan-answer') : null
   },
 
-  // for (const เพื่อนบ้าน of this.planNeighbors()) { this.planFocus(...); ... }
   (node, ctx) => {
     if (node.type !== 'ForOfStatement') return null
     if (!ctx.call(node.right, 'planNeighbors')) return null
@@ -614,7 +585,6 @@ const STATEMENT_PARSERS: Matcher[] = [
     const back = ctx.returned(node)
     if (back === undefined) return null
 
-    // return null -> หยุดเดิน, return 'right' -> เดินไปทางนั้น
     if (back === null) return ctx.make('maze.stop')
 
     if (back.type === 'Literal') {
@@ -626,10 +596,8 @@ const STATEMENT_PARSERS: Matcher[] = [
         : null
     }
 
-    // return this.facing -> เดินหน้า
     if (ctx.thisProp(back, 'facing')) return ctx.make('maze.walk')
 
-    // return (this.facing = 'up') -> เดินไปทางนั้น
     if (back.type === 'AssignmentExpression' && ctx.thisProp(back.left, 'facing')) {
       const dir = ctx.str(back.right)
       if (dir) return ctx.make('maze.walk-dir', { dir })
@@ -643,11 +611,9 @@ const STATEMENT_PARSERS: Matcher[] = [
     const assign = node.expression
     if (assign?.type !== 'AssignmentExpression' || !ctx.thisProp(assign.left, 'facing')) return null
 
-    // this.facing = 'up'
     const dir = ctx.str(assign.right)
     if (dir) return ctx.make('maze.face', { dir })
 
-    // this.facing = this.turn(...) — ซ้อนสองชั้นคือหันกลับหลัง
     const outer = ctx.call(assign.right, 'turn')
     if (!outer) return null
 
@@ -686,12 +652,10 @@ const VALUE_PARSERS: Matcher[] = [
   (node, ctx) => (ctx.thisProp(node, 'here', 'step') ? ctx.make('maze.steps') : null)
 ]
 
-/** ตัดส่วนที่ระบบเติมให้ในเมธอด solve() ออก เหลือแค่บล็อกของผู้เล่น */
 function unwrapPlan(statements: Node[], ctx: ParseContext): Node[] {
   return statements.filter((node) => {
     if (node.type === 'ExpressionStatement' && ctx.thisProp(node.expression?.left, 'here')) return false
 
-    // return this.planAnswer() ที่ระบบเติมท้ายเมธอดให้ ไม่ใช่บล็อกของผู้เล่น
     const back = ctx.returned(node)
     if (back && ctx.call(back, 'planAnswer') && node === statements[statements.length - 1]) return false
 
@@ -699,7 +663,6 @@ function unwrapPlan(statements: Node[], ctx: ParseContext): Node[] {
   })
 }
 
-/** ตัดส่วนที่ระบบเติมให้ (this.here = state, ลูปวนซ้ำ, return null) ออก เหลือแค่โปรแกรมของผู้เล่น */
 function unwrap(statements: Node[], ctx: ParseContext): Node[] {
   const retry = statements.find(
     (node) => node.type === 'ForStatement' && node.test?.right?.value === RETRIES
@@ -751,7 +714,7 @@ export const MAZE_PACK = createPack({
         hat: PLAN_HAT,
         name: 'solve',
         unwrap: unwrapPlan,
-        // ไม่มีบล็อกวางแผน ก็ไม่ต้องเขียนเมธอดนี้ ไม่งั้นหุ่นเดินทีละก้าวจะถูกดันเข้าโหมดวางแผน
+
         skipWhenEmpty: true,
         write: (writer) => {
           writer.push('solve(state) {')

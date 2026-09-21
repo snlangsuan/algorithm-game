@@ -1,20 +1,19 @@
-/**
- * ตัวเลือกในเกมกับหัวข้อในหน้าความรู้ต้องตรงกันสองทาง
- *
- * กติกาที่ผู้ใช้สั่งไว้: ทุกอัลกอริทึมที่เลือกได้ในเกม ต้องมีหน้าความรู้
- * และหัวข้อไหนไม่มีตัวอย่างให้เลือกเล่นจริง ก็ไม่ควรอยู่ในหน้าความรู้
- *
- * ส่วนท้ายของไฟล์ล็อกตัวเลขที่หน้าความรู้เขียนอ้างไว้ — ตัวเลขพวกนี้วัดมาจริง
- * ถ้าแก้อัลกอริทึมแล้วผลเปลี่ยน เทสต์ต้องฟ้อง ไม่ใช่ปล่อยให้หน้าโกหกเงียบ ๆ
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { TOPICS } from '~/data/algorithms'
+import { countBlocks } from './helpers'
 import { generate } from '~/game/blocks/codegen'
 import { normalize, type BlockPack } from '~/game/blocks/pack'
+import { CHASE_PACK } from '~/game/chase/blocks/pack'
+import { DINO_PACK } from '~/game/dino/blocks/pack'
+import { RUNNER_PACK } from '~/game/chase/blocks/runner'
+import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
+import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
+import { AGENT_GLOBALS as HANOI_GLOBALS, HanoiAgent } from '~/game/hanoi/agent'
+import { createHanoi, optimalMoves, validateMoves, type Move } from '~/game/hanoi/engine'
 import { AGENT_GLOBALS as MAZE_GLOBALS, MazeAgent } from '~/game/maze/agent'
 import { AGENT_GLOBALS, OthelloAgent } from '~/game/othello/agent'
 import { createMaze, solveSteps, validatePath, type Point } from '~/game/maze/engine'
@@ -30,15 +29,20 @@ import {
   type Player
 } from '~/game/othello/engine'
 
-/**
- * ตัวอย่างที่ตั้งใจให้ไม่มีหน้าความรู้ — ต้องประกาศไว้ตรงนี้พร้อมเหตุผลเท่านั้น
- * ห้ามเพิ่มเพราะ "ยังไม่ได้เขียนหน้า" ให้เขียนหน้าแทน
- */
 const NOT_ALGORITHMS: Record<string, string> = {
-  'maze/starter': 'โปรแกรมตั้งต้นให้เด็กลากแก้ ตั้งใจให้ยังไปไม่ถึงทางออก ไม่ใช่อัลกอริทึม'
+  'maze/starter': 'โปรแกรมตั้งต้นให้เด็กลากแก้ ตั้งใจให้ยังไปไม่ถึงทางออก ไม่ใช่อัลกอริทึม',
+  'hanoi/starter': 'โปรแกรมตั้งต้นให้เด็กลากแก้ ย้ายจานเล็กสุดวนอยู่อย่างเดียวจนไม่มีวันจบ ไม่ใช่อัลกอริทึม',
+  'chase/starter':
+    'โปรแกรมตั้งต้นให้เด็กลากแก้ เห็นตัวเอกค่อยไล่ ไม่เห็นก็เดินสุ่ม จึงไล่ไม่ติดสักที ไม่ใช่อัลกอริทึม',
+  'runner/collector':
+    'โปรแกรมตั้งต้นของฝ่ายหนี เดินหาของที่ใกล้ที่สุดอย่างเดียวโดยไม่มองผู้ไล่ล่าเลย ไม่ใช่อัลกอริทึมการหนี',
+  'dino/starter':
+    'โปรแกรมตั้งต้นให้เด็กลากแก้ เผื่อระยะเป็นตัวเลขตายตัวและไม่เคยดูชนิดของเลย จึงไปได้ไม่กี่ร้อยเมตร ไม่ใช่อัลกอริทึม',
+  'line/starter':
+    'โปรแกรมตั้งต้นให้เด็กลากแก้ ดูเซนเซอร์ตัวซ้ายตัวเดียวและไม่มีกฎเลี้ยวขวาเลย จึงครบรอบได้แค่สนามวงรี ไม่ใช่อัลกอริทึม'
 }
 
-const PACKS: BlockPack[] = [MAZE_PACK, OTHELLO_PACK]
+const PACKS: BlockPack[] = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK]
 
 test('ทุกตัวอย่างที่เลือกได้ในเกม มีหน้าความรู้ของตัวเอง', () => {
   for (const pack of PACKS) {
@@ -80,8 +84,6 @@ test('รายการยกเว้นไม่มีของค้าง �
     )
   }
 })
-
-// ---------- ล็อกตัวเลขที่หน้าความรู้อ้างไว้ ----------
 
 function othello(presetId: string): OthelloAgent {
   const preset = OTHELLO_PACK.presets.find((item) => item.id === presetId)!
@@ -129,7 +131,6 @@ function play(black: OthelloAgent, white: OthelloAgent) {
   return countDiscs(board)
 }
 
-/** ตัวอย่าง "สุ่ม" ใช้ Math.random จริง ต้องล็อกไว้ ไม่งั้นเทสต์ตกเป็นครั้งคราวโดยโค้ดไม่ได้พัง */
 function withSeededRandom<T>(seed: number, run: () => T): T {
   const real = Math.random
   let state = seed
@@ -167,7 +168,7 @@ test('หน้า "เปลี่ยนกลยุทธ์ตามช่ว
 })
 
 test('หน้า "เส้นฐานสุ่ม" — สัดส่วนชนะยังตรงกับที่เขียนไว้', () => {
-  // 20 รอบ รอบละสองเกม สลับกันเล่นดำและขาว = 40 เกมต่อคู่ ตามที่หน้าความรู้เขียนไว้
+
   const count = (rival: string) =>
     withSeededRandom(20260920, () => {
       let wins = 0
@@ -227,7 +228,6 @@ test('หน้า DFS — จำนวนช่องที่เปิดด�
 
   const text = TOPICS.find((topic) => topic.slug === 'dfs')!.inGame
 
-  // แผนที่ "อุปสรรคสุ่ม" ใบเดียวกับที่หน้า Dijkstra กับ A* ใช้
   const open = createMaze({ kind: 'obstacles', seed: 3 })
   const dfsOpen = run('dfs', open)
   const bfsOpen = run('bfs', open)
@@ -240,11 +240,83 @@ test('หน้า DFS — จำนวนช่องที่เปิดด�
     assert.ok(text.includes(String(number)), `หน้า DFS ไม่ได้พูดถึงเลข ${number} แล้ว`)
   }
 
-  // แผนที่เริ่มต้น เป็นเขาวงกตแท้ที่มีทางเดียว ทั้งคู่จึงต้องได้เท่ากันและเท่ากับเฉลย
   const perfect = createMaze()
   const best = (solveSteps(perfect)?.path.length ?? 0) - 1
   assert.equal(run('dfs', perfect).steps, best)
   assert.equal(run('bfs', perfect).steps, best)
   assert.equal(best, 134)
   assert.ok(text.includes('134'))
+})
+
+test('หน้าหอคอยฮานอย — จำนวนตากับจำนวนงานที่หยิบ ยังตรงกับที่เขียนไว้', () => {
+  /** สร้าง agent จากโค้ดที่บล็อกแปลงออกมา แล้วนับว่าหยิบงานจากกองไปกี่ครั้ง */
+  const run = (presetId: string, disks: number) => {
+    const preset = HANOI_PACK.presets.find((item) => item.id === presetId)!
+    const { code } = generate(normalize(preset.build(), HANOI_PACK), HANOI_PACK)
+    const globals = HANOI_GLOBALS as Record<string, unknown>
+    const factory = new Function(
+      'HanoiAgent',
+      ...Object.keys(globals),
+      `"use strict";\n${code}\n;return Agent;`
+    )
+
+    const Agent = factory(HanoiAgent, ...Object.values(globals))
+    const agent = new Agent() as HanoiAgent & { planTake: () => void }
+    const puzzle = createHanoi({ disks })
+
+    let takes = 0
+    const realTake = agent.planTake.bind(agent)
+    agent.planTake = () => {
+      takes++
+      realTake()
+    }
+
+    const state = {
+      towers: puzzle.towers,
+      disks: puzzle.disks,
+      source: puzzle.source,
+      target: puzzle.target,
+      spare: puzzle.spare,
+      move: 1,
+      last: null,
+      moveLimit: 20_000,
+      timeBudget: 1000
+    }
+
+    const report = validateMoves(puzzle, agent.solve(state) as Move[], 20_000)
+    assert.ok(report.ok, `${presetId} จาน ${disks} ใบ: ${report.message}`)
+
+    return { moves: report.count, takes }
+  }
+
+  const text = TOPICS.find((topic) => topic.slug === 'divide-and-conquer')!.inGame
+
+  const five = run('recursive', 5)
+  const ten = run('recursive', 10)
+
+  assert.deepEqual(
+    { moves5: five.moves, takes5: five.takes, moves10: ten.moves, takes10: ten.takes },
+    { moves5: 31, takes5: 46, moves10: 1023, takes10: 1534 }
+  )
+  assert.equal(five.moves, optimalMoves(5))
+  assert.equal(ten.moves, optimalMoves(10))
+
+  for (const number of ['31', '46', '1,023', '1,534']) {
+    assert.ok(text.includes(number), `หน้าแบ่งแล้วพิชิตไม่ได้พูดถึงเลข ${number} แล้ว`)
+  }
+
+  // หน้ากฎสลับตาอ้างว่าได้จำนวนตาเท่ากันเป๊ะ — ต้องเป็นจริงทุกขนาดที่หน้านั้นยกมา
+  const parity = TOPICS.find((topic) => topic.slug === 'hanoi-parity')!.inGame
+
+  for (const [disks, expected] of [[3, '7'], [5, '31'], [10, '1,023']] as const) {
+    assert.equal(optimalMoves(disks), Number(expected.replace(',', '')))
+    assert.ok(parity.includes(expected), `หน้ากฎสลับตาไม่ได้พูดถึงเลข ${expected} แล้ว`)
+  }
+
+  // จำนวนบล็อกของตัวอย่างที่หน้าเขียนอ้างไว้
+  const blocks = countBlocks(
+    normalize(HANOI_PACK.presets.find((item) => item.id === 'recursive')!.build(), HANOI_PACK)
+  )
+  assert.equal(blocks, 9)
+  assert.ok(text.includes('9 บล็อก'), 'หน้าแบ่งแล้วพิชิตไม่ได้บอกว่ามี 9 บล็อกแล้ว')
 })

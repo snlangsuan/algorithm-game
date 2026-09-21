@@ -3,19 +3,15 @@ import type { BlockPack, BlockProgram } from '~/game/blocks/pack'
 import type { AuthorMode, BlockId } from '~/game/blocks/types'
 import type { LogLine } from '~/game/shared/console'
 
-/**
- * ที่ทำงานของโปรแกรมหนึ่งชุด — ใช้เหมือนกันทุกเกม
- * สลับดูได้ระหว่างบล็อกที่ต่อไว้ กับโค้ดที่บล็อกแปลงออกมา พร้อมปุ่มแก้ในหัวเดียว
- */
 const props = withDefaults(
   defineProps<{
     pack: BlockPack
     program: BlockProgram
-    /** ต่อบล็อกหรือพิมพ์โค้ดเอง */
+
     author: AuthorMode
-    /** โค้ดที่กำลังจะรันจริง */
+
     code: string
-    /** บล็อก/บรรทัดที่กำลังทำงาน */
+
     activeId?: BlockId | null
     counts?: Record<BlockId, number>
     line?: number | null
@@ -23,9 +19,9 @@ const props = withDefaults(
     traced?: boolean
     running?: boolean
     disabled?: boolean
-    /** ข้อความที่โปรแกรมพิมพ์ออกคอนโซล */
+
     logs?: LogLine[]
-    /** แบบเต็มคอลัมน์: ตัวอักษรใหญ่ขึ้นและสูงตามจอ */
+
     tall?: boolean
   }>(),
   {

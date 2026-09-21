@@ -1,3 +1,5 @@
+import type { ShallowRef } from 'vue'
+import { SPEEDS, type SpeedOption } from '~/game/othello/pace'
 import type { AgentMemory, TurnState } from '~/game/othello/agent'
 import {
   BLACK,
@@ -28,30 +30,29 @@ export type GameStatus = 'setup' | 'playing' | 'paused' | 'finished' | 'error'
 
 export interface SideConfig {
   kind: SideKind
-  /** ต่อบล็อกหรือพิมพ์โค้ดเอง */
+
   author: AuthorMode
   templateId: string
   code: string
-  /** ชื่อที่ได้จาก agent หลังโหลดโค้ดสำเร็จ */
+
   agentName: string
 }
 
-/** สิ่งที่โค้ดฝั่งนั้นกำลังทำอยู่ ใช้แสดงบนหน้าจอระหว่างเกม */
 export interface AgentTrace {
   running: boolean
-  /** บรรทัดของโค้ดที่กำลังรัน */
+
   line: number | null
-  /** จำนวนครั้งที่รันแต่ละบรรทัด */
+
   lines: Record<number, number>
-  /** เมธอดที่กำลังรัน ณ ตอนนี้ */
+
   method: string | null
-  /** ความลึกของการเรียกซ้อน */
+
   depth: number
-  /** จำนวนครั้งที่เรียกเมธอดทั้งหมดในตานี้ */
+
   calls: number
-  /** จำนวนครั้งแยกตามเมธอด (ได้ครบหลังคิดจบ) */
+
   counts: Record<string, number>
-  /** เวลาที่ใช้คิดตาล่าสุด (ms) */
+
   ms: number
 }
 
@@ -83,13 +84,12 @@ const createSide = (templateId: string): SideConfig => ({
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** เวลาที่แนะนำให้ agent ใช้คิดต่อหนึ่งตา (ms) — เพดานจริงของระบบคือ 3000 */
 const TURN_BUDGET = 500
-/** ตอนฝึกซ้อมให้คิดสั้นลงมาก จะได้เล่นจบหลายเกมในเวลาไม่นาน */
+
 const TRAIN_BUDGET = 40
 
 const MEMORY_PREFIX = 'othello:memory:'
-/** กันไม่ให้ความจำใหญ่จนกิน localStorage */
+
 const MEMORY_LIMIT = 256 * 1024
 
 export interface MemoryInfo {
@@ -98,18 +98,6 @@ export interface MemoryInfo {
   savedAt: number
 }
 
-/** จังหวะที่บอทลงหมาก — แถบเลือกจังหวะกับค่าเริ่มต้นต้องอ่านจากที่เดียวกัน */
-export interface SpeedOption {
-  value: number
-  label: string
-}
-
-export const SPEEDS: SpeedOption[] = [
-  { value: 0, label: 'ทันที' },
-  { value: 200, label: 'เร็ว' },
-  { value: 500, label: 'ปกติ' },
-  { value: 1000, label: 'ช้า' }
-]
 
 const NORMAL_SPEED = SPEEDS[2]!.value
 
@@ -124,6 +112,524 @@ const emptyTrace = (): AgentTrace => ({
   ms: 0
 })
 
+type TrainFocus = Player | 'both'
+
+type Blocks = Record<Player, ReturnType<typeof useBlockProgram>>
+
+interface Training {
+  running: boolean
+
+  /**
+   * เลขรอบฝึก — เพิ่มขึ้นทุกครั้งที่กดเริ่มฝึกใหม่
+   *
+   * รอบที่ถูกสั่งหยุดยังเก็บกวาดของตัวเองไม่เสร็จทันที ถ้าผู้ใช้กดเริ่มใหม่ในจังหวะนั้น
+   * รอบเก่าจะไปปิดสวิตช์ทับรอบใหม่ที่เพิ่งติด เลขนี้จึงมีไว้ให้แต่ละรอบเก็บกวาดเฉพาะของตัวเอง
+   */
+  session: number
+  done: number
+  total: number
+  blackWins: number
+  whiteWins: number
+  draws: number
+  focus: TrainFocus
+  error: string | null
+}
+
+interface Othello {
+  board: ShallowRef<Board>
+  current: Ref<Player>
+  status: Ref<GameStatus>
+  turn: Ref<number>
+  lastMove: Ref<{ row: number; col: number } | null>
+  log: Ref<LogEntry[]>
+  error: Ref<string | null>
+  thinking: Ref<Player | null>
+  speed: Ref<number>
+  sides: Record<Player, SideConfig>
+  traces: Record<Player, AgentTrace>
+  blocks: Blocks
+  activeBlocks: Record<Player, BlockId | null>
+  logs: Record<Player, LogLine[]>
+  memories: Record<Player, MemoryInfo | null>
+  training: Training
+  runners: Record<Player, AgentRunner | null>
+  history: Snapshot[]
+  logLimit: number
+  generation: number
+  reset: () => void
+}
+
+const PLAYERS = [BLACK, WHITE] as Player[]
+
+const sideLabel = (player: Player): string => (player === BLACK ? 'ดำ' : 'ขาว')
+
+const reason = (caught: unknown): string => (caught instanceof Error ? caught.message : String(caught))
+
+const championOf = (board: Board): Player | null => {
+  const { black, white } = countDiscs(board)
+  if (black === white) return null
+  return black > white ? BLACK : WHITE
+}
+
+function memoryKey(game: Othello, player: Player): string {
+  const side = game.sides[player]
+  const program =
+    side.author === 'blocks' ? `blocks:${game.blocks[player].programKey.value}` : side.templateId
+
+  return `${MEMORY_PREFIX}${program}#${player === BLACK ? 'black' : 'white'}`
+}
+
+function storedMemory(game: Othello, player: Player): string | null {
+  if (!import.meta.client) return null
+
+  try {
+    return localStorage.getItem(memoryKey(game, player))
+  } catch {
+    return null
+  }
+}
+
+function readMemory(game: Othello, player: Player): AgentMemory | null {
+  const raw = storedMemory(game, player)
+  if (!raw) return null
+
+  try {
+    return JSON.parse(raw) as AgentMemory
+  } catch {
+    return null
+  }
+}
+
+const infoOf = (data: AgentMemory, bytes: number, savedAt: number): MemoryInfo => ({
+  label: typeof data.label === 'string' ? data.label : undefined,
+  bytes,
+  savedAt
+})
+
+function writeMemory(game: Othello, player: Player, data: AgentMemory): void {
+  if (!import.meta.client) return
+
+  try {
+    const raw = JSON.stringify(data)
+    if (raw.length > MEMORY_LIMIT) return
+
+    localStorage.setItem(memoryKey(game, player), raw)
+    game.memories[player] = infoOf(data, raw.length, Date.now())
+  } catch {
+    game.memories[player] = game.memories[player]
+  }
+}
+
+function refreshMemory(game: Othello, player: Player): void {
+  if (!import.meta.client) return
+
+  const raw = storedMemory(game, player)
+  if (!raw) {
+    game.memories[player] = null
+    return
+  }
+
+  try {
+    game.memories[player] = infoOf(JSON.parse(raw) as AgentMemory, raw.length, 0)
+  } catch {
+    game.memories[player] = null
+  }
+}
+
+function clearMemory(game: Othello, player: Player): void {
+  if (!import.meta.client) return
+
+  try {
+    localStorage.removeItem(memoryKey(game, player))
+  } catch {
+    game.memories[player] = game.memories[player]
+  }
+
+  game.memories[player] = null
+}
+
+function snapshot(game: Othello): Snapshot {
+  return {
+    board: cloneBoard(game.board.value),
+    current: game.current.value,
+    turn: game.turn.value,
+    lastMove: game.lastMove.value ? { ...game.lastMove.value } : null,
+    log: game.log.value.map((entry) => ({ ...entry }))
+  }
+}
+
+function stopTraces(game: Othello): void {
+  for (const player of PLAYERS) {
+    game.traces[player].running = false
+    game.traces[player].method = null
+    game.traces[player].depth = 0
+  }
+}
+
+function fail(game: Othello, message: string): void {
+  game.generation++
+  game.thinking.value = null
+  stopTraces(game)
+  game.error.value = message
+  game.status.value = 'error'
+}
+
+function buildTurnState(game: Othello, player: Player): TurnState {
+  return {
+    board: cloneBoard(game.board.value),
+    player,
+    opponent: opponent(player),
+    validMoves: getValidMoves(game.board.value, player),
+    turn: game.turn.value,
+    lastMove: game.lastMove.value ? { ...game.lastMove.value } : null,
+    timeBudget: TURN_BUDGET
+  }
+}
+
+function finish(game: Othello): void {
+  game.status.value = 'finished'
+  game.thinking.value = null
+  stopTraces(game)
+
+  const champion = championOf(game.board.value)
+  for (const player of PLAYERS) game.runners[player]?.notifyEnd(cloneBoard(game.board.value), champion)
+}
+
+function passOrFinish(game: Othello, next: Board, player: Player): boolean {
+  const foe = opponent(player)
+
+  if (hasValidMove(next, foe)) {
+    game.current.value = foe
+    return true
+  }
+
+  if (hasValidMove(next, player)) {
+    game.log.value = [
+      ...game.log.value,
+      { turn: game.turn.value, player: foe, notation: '—', flips: 0, pass: true }
+    ]
+    game.current.value = player
+    return true
+  }
+
+  finish(game)
+  return false
+}
+
+function commitMove(game: Othello, row: number, col: number): void {
+  const player = game.current.value
+  const move = findMove(getValidMoves(game.board.value, player), row, col)
+
+  if (!move) {
+    fail(game, `ตา ${toNotation(row, col)} ผิดกติกา`)
+    return
+  }
+
+  game.history.push(snapshot(game))
+
+  const next = cloneBoard(game.board.value)
+  next[row]![col] = player
+  for (const [r, c] of move.flips) next[r]![c] = player
+
+  game.board.value = next
+  game.lastMove.value = { row, col }
+  game.log.value = [
+    ...game.log.value,
+    { turn: game.turn.value, player, notation: toNotation(row, col), flips: move.flips.length, pass: false }
+  ]
+  game.turn.value++
+
+  if (!passOrFinish(game, next, player)) return
+
+  void driveTurn(game)
+}
+
+async function driveTurn(game: Othello): Promise<void> {
+  if (game.status.value !== 'playing') return
+
+  const player = game.current.value
+  if (game.sides[player].kind !== 'code') return
+
+  const runner = game.runners[player]
+  if (!runner?.alive) {
+    fail(game, 'agent หยุดทำงานไปแล้ว กด "เริ่มใหม่" เพื่อโหลดโค้ดอีกครั้ง')
+    return
+  }
+
+  const gen = game.generation
+  game.thinking.value = player
+
+  Object.assign(game.traces[player], emptyTrace(), { running: true, method: 'chooseMove', depth: 1 })
+
+  try {
+    const [move] = await Promise.all([
+      runner.chooseMove(buildTurnState(game, player)),
+      wait(game.speed.value)
+    ])
+
+    if (gen !== game.generation || game.status.value !== 'playing') return
+
+    game.thinking.value = null
+    game.traces[player].running = false
+    game.traces[player].method = null
+    commitMove(game, move.row, move.col)
+  } catch (caught) {
+    if (gen !== game.generation) return
+    fail(game, `โค้ดฝั่ง${sideLabel(player)}: ${reason(caught)}`)
+  }
+}
+
+function disposeRunners(game: Othello): void {
+  for (const player of PLAYERS) {
+    game.runners[player]?.dispose()
+    game.runners[player] = null
+  }
+}
+
+function createRunner(game: Othello, player: Player, persist = true): AgentRunner {
+  return new AgentRunner(sourceOf(game, player), {
+    memory: readMemory(game, player),
+
+    /*
+     * ฝึกทีละฝั่ง ฝั่งที่ไม่ได้ฝึกต้องเป็นคู่ซ้อมที่นิ่ง ไม่ใช่แค่ "ไม่บันทึกลงเครื่อง"
+     * ถ้าปล่อยให้มันจำในหัวตัวเองระหว่างรอบ มันจะปรับตัวสู้ฝั่งที่กำลังฝึกไปเรื่อย ๆ
+     * ฝั่งที่ฝึกก็เลยเจอคู่ต่อสู้ที่แข็งขึ้นทุกรอบ ยิ่งฝึกยิ่งดูเหมือนแย่ลง
+     */
+    frozen: !persist,
+
+    onMemory: (data) => {
+      if (persist) writeMemory(game, player, data)
+    },
+    onLog: (lines) => {
+      const next = [...game.logs[player], ...lines]
+      game.logs[player] = next.length > game.logLimit ? next.slice(next.length - game.logLimit) : next
+    },
+    onTrace: (tick) => {
+      const trace = game.traces[player]
+      trace.method = tick.method
+      trace.depth = tick.depth
+      trace.calls = tick.calls
+
+      if (tick.line > 0) {
+        trace.line = tick.line
+        const id = game.blocks[player].blockAtLine(tick.line)
+        if (id) game.activeBlocks[player] = id
+      }
+    },
+    onSummary: (summary) => {
+      const trace = game.traces[player]
+      trace.counts = summary.counts
+      trace.calls = summary.calls
+      trace.ms = summary.ms
+      trace.lines = summary.lines
+      trace.method = null
+      trace.running = false
+    }
+  })
+}
+
+function blankBoard(game: Othello): void {
+  game.board.value = createBoard()
+  game.current.value = BLACK
+  game.turn.value = 1
+  game.lastMove.value = null
+  game.log.value = []
+  game.error.value = null
+  game.thinking.value = null
+  game.history.length = 0
+
+  for (const player of PLAYERS) Object.assign(game.traces[player], emptyTrace())
+}
+
+async function bootRunner(game: Othello, player: Player): Promise<boolean> {
+  const runner = createRunner(game, player)
+
+  try {
+    game.sides[player].agentName = await runner.start()
+    runner.notifyStart(player)
+    game.runners[player] = runner
+    return true
+  } catch (caught) {
+    runner.dispose()
+    fail(game, `โค้ดฝั่ง${sideLabel(player)}: ${reason(caught)}`)
+    return false
+  }
+}
+
+async function startGame(game: Othello): Promise<void> {
+  game.generation++
+  disposeRunners(game)
+  blankBoard(game)
+
+  for (const player of PLAYERS) {
+    if (game.sides[player].kind !== 'code') continue
+    if (!(await bootRunner(game, player))) return
+  }
+
+  game.status.value = 'playing'
+  void driveTurn(game)
+}
+
+const sourceOf = (game: Othello, player: Player): string =>
+  game.sides[player].author === 'blocks'
+    ? game.blocks[player].generated.value.code
+    : game.sides[player].code
+
+async function playHeadless(
+  game: Othello,
+  pair: Record<Player, AgentRunner>,
+  alive: () => boolean
+): Promise<Player | null> {
+  let table = createBoard()
+  let side: Player = BLACK
+  let ply = 1
+  let previous: { row: number; col: number } | null = null
+
+  for (const player of PLAYERS) pair[player].notifyStart(player)
+
+  while (ply < 200 && alive()) {
+    const moves = getValidMoves(table, side)
+
+    if (moves.length === 0) {
+      if (!hasValidMove(table, opponent(side))) break
+      side = opponent(side)
+      continue
+    }
+
+    const move = await pair[side].chooseMove({
+      board: cloneBoard(table),
+      player: side,
+      opponent: opponent(side),
+      validMoves: moves,
+      turn: ply,
+      lastMove: previous,
+      timeBudget: TRAIN_BUDGET
+    })
+
+    table = applyMove(table, move, side)
+    previous = move
+    side = opponent(side)
+    ply++
+  }
+
+  const champion = championOf(table)
+  for (const player of PLAYERS) pair[player].notifyEnd(cloneBoard(table), champion)
+
+  await wait(30)
+
+  if (alive()) game.board.value = table
+  return champion
+}
+
+function tally(training: Training, champion: Player | null): void {
+  if (champion === BLACK) training.blackWins++
+  else if (champion === WHITE) training.whiteWins++
+  else training.draws++
+
+  training.done++
+}
+
+function beginTraining(training: Training, games: number, focus: TrainFocus): number {
+  training.session++
+  training.running = true
+  training.done = 0
+  training.total = games
+  training.blackWins = 0
+  training.whiteWins = 0
+  training.draws = 0
+  training.focus = focus
+  training.error = null
+
+  return training.session
+}
+
+async function train(game: Othello, games: number, focus: TrainFocus = 'both'): Promise<void> {
+  if (game.training.running) return
+
+  if (game.sides[BLACK].kind !== 'code' || game.sides[WHITE].kind !== 'code') {
+    game.training.error = 'ต้องตั้งให้ทั้งสองฝั่งเป็นบอทก่อนถึงจะฝึกได้'
+    return
+  }
+
+  game.reset()
+
+  const session = beginTraining(game.training, games, focus)
+
+  /** รอบนี้ยังเป็นรอบที่หน้าจอสนใจอยู่ไหม — กดหยุดหรือกดเริ่มใหม่แล้วก็ไม่ใช่แล้ว */
+  const alive = () => game.training.running && game.training.session === session
+
+  const pair = {} as Record<Player, AgentRunner>
+
+  try {
+    for (const player of PLAYERS) {
+      const runner = createRunner(game, player, focus === 'both' || focus === player)
+      game.sides[player].agentName = await runner.start()
+      pair[player] = runner
+    }
+
+    for (let round = 0; round < games && alive(); round++) {
+      const champion = await playHeadless(game, pair, alive)
+      if (alive()) tally(game.training, champion)
+    }
+  } catch (caught) {
+    if (game.training.session === session) game.training.error = reason(caught)
+  } finally {
+    await wait(100)
+
+    for (const player of PLAYERS) pair[player]?.dispose()
+
+    // รอบใหม่เริ่มไปแล้วก็ปล่อยเขาไป อย่าไปปิดสวิตช์หรือล้างกระดานทับของเขา
+    if (game.training.session === session) {
+      game.training.running = false
+      game.board.value = createBoard()
+    }
+  }
+}
+
+async function probeCode(code: string): Promise<{ ok: boolean; message: string }> {
+  const runner = new AgentRunner(code)
+
+  try {
+    const name = await runner.start()
+    const fresh = createBoard()
+    const move = await runner.chooseMove({
+      board: fresh,
+      player: BLACK,
+      opponent: WHITE,
+      validMoves: getValidMoves(fresh, BLACK),
+      turn: 1,
+      lastMove: null
+    })
+
+    return { ok: true, message: `"${name}" ทำงานได้ — ตาแรกที่เลือกคือ ${toNotation(move.row, move.col)}` }
+  } catch (caught) {
+    return { ok: false, message: reason(caught) }
+  } finally {
+    runner.dispose()
+  }
+}
+
+function switchAuthor(game: Othello, player: Player, mode: AuthorMode): void {
+  if (game.sides[player].author === mode) return
+
+  if (mode === 'code') {
+    game.sides[player].code = game.blocks[player].generated.value.code
+    game.sides[player].agentName = game.blocks[player].program.name
+  } else {
+    const imported = importProgram(game.sides[player].code, OTHELLO_PACK)
+
+    if (!imported.ok || !imported.program) {
+      game.error.value = `ฝั่ง${sideLabel(player)}: ${imported.message}`
+      return
+    }
+
+    game.blocks[player].replaceProgram(imported.program)
+    game.error.value = null
+  }
+
+  game.sides[player].author = mode
+}
+
 export function useOthelloGame() {
   const board = shallowRef<Board>(createBoard())
   const current = ref<Player>(BLACK)
@@ -133,10 +639,7 @@ export function useOthelloGame() {
   const log = ref<LogEntry[]>([])
   const error = ref<string | null>(null)
   const thinking = ref<Player | null>(null)
-  /**
-   * หน่วงก่อนที่ agent จะลงหมาก เพื่อให้ดูทัน (ms)
-   * ต้องเป็นค่าใดค่าหนึ่งใน SPEEDS ไม่งั้นแถบ "จังหวะบอท" จะไม่มีปุ่มไหนสว่างเลย
-   */
+
   const speed = ref(NORMAL_SPEED)
 
   const sides = reactive<Record<Player, SideConfig>>({
@@ -149,27 +652,23 @@ export function useOthelloGame() {
     [WHITE]: emptyTrace()
   }) as Record<Player, AgentTrace>
 
-  /** โปรแกรมบล็อกของแต่ละฝั่ง ใช้แกนกลางตัวเดียวกับเกมอื่น */
   const blocks = {
     [BLACK]: useBlockProgram(OTHELLO_PACK, DEFAULT_PRESET_ID),
     [WHITE]: useBlockProgram(OTHELLO_PACK, 'greedy')
   } as Record<Player, ReturnType<typeof useBlockProgram>>
 
-  /** โค้ดที่จะส่งให้ worker ของฝั่งนั้นรันจริง */
-  const sourceOf = (player: Player): string =>
-    sides[player].author === 'blocks' ? blocks[player].generated.value.code : sides[player].code
+  const sourceOf = (player: Player): string => sides[player].author === 'blocks'
+    ? blocks[player].generated.value.code
+    : sides[player].code
 
-  /** ชื่อที่โชว์บนหน้าจอ */
   const nameOf = (player: Player): string =>
     sides[player].author === 'blocks' ? blocks[player].program.name : sides[player].agentName
 
-  /** บล็อกที่กำลังทำงานของแต่ละฝั่ง */
   const activeBlocks = reactive<Record<Player, BlockId | null>>({
     [BLACK]: null,
     [WHITE]: null
   }) as Record<Player, BlockId | null>
 
-  /** ข้อความที่โปรแกรมแต่ละฝั่งพิมพ์ออกคอนโซล */
   const logs = reactive<Record<Player, LogLine[]>>({ [BLACK]: [], [WHITE]: [] }) as Record<
     Player,
     LogLine[]
@@ -183,109 +682,46 @@ export function useOthelloGame() {
   const runners: Record<Player, AgentRunner | null> = { [BLACK]: null, [WHITE]: null }
   const history: Snapshot[] = []
 
-  /** สรุปความจำของแต่ละฝั่ง สำหรับแสดงบนหน้าจอ */
   const memories = reactive<Record<Player, MemoryInfo | null>>({
     [BLACK]: null,
     [WHITE]: null
   }) as Record<Player, MemoryInfo | null>
 
-  /** ฝึกฝั่งไหน — ฝั่งที่ไม่ได้ฝึกจะเล่นด้วยแต่ไม่บันทึกความจำ */
-  type TrainFocus = Player | 'both'
-
-  const training = reactive({
+  const training = reactive<Training>({
     running: false,
+    session: 0,
     done: 0,
     total: 0,
     blackWins: 0,
     whiteWins: 0,
     draws: 0,
-    focus: 'both' as TrainFocus,
-    error: null as string | null
+    focus: 'both',
+    error: null
   })
 
-  // ---------- ความจำข้ามเกม ----------
-
-  /** แยกช่องเก็บตามโค้ดตั้งต้นและสีที่เล่น จะได้ไม่ทับกันเวลาใช้เทมเพลตเดียวกันสองฝั่ง */
-  const memoryKey = (player: Player) => {
-    const side = sides[player]
-    const program = side.author === 'blocks' ? `blocks:${blocks[player].presetId.value}` : side.templateId
-    return `${MEMORY_PREFIX}${program}#${player === BLACK ? 'black' : 'white'}`
+  const game: Othello = {
+    board,
+    current,
+    status,
+    turn,
+    lastMove,
+    log,
+    error,
+    thinking,
+    speed,
+    sides,
+    traces,
+    blocks,
+    activeBlocks,
+    logs,
+    memories,
+    training,
+    runners,
+    history,
+    logLimit: LOG_LIMIT,
+    generation: 0,
+    reset: () => reset()
   }
-
-  function readMemory(player: Player): AgentMemory | null {
-    if (!import.meta.client) return null
-
-    try {
-      const raw = localStorage.getItem(memoryKey(player))
-      return raw ? (JSON.parse(raw) as AgentMemory) : null
-    } catch {
-      return null
-    }
-  }
-
-  function writeMemory(player: Player, data: AgentMemory): void {
-    if (!import.meta.client) return
-
-    try {
-      const raw = JSON.stringify(data)
-
-      // ใหญ่เกินโควตาก็แค่ไม่บันทึก ไม่ล้มเกมทิ้ง
-      // (ไม่งั้น agent สั่ง saveMemory ก้อนใหญ่ ๆ เพื่อล้มเกมที่ตัวเองกำลังแพ้ได้)
-      if (raw.length > MEMORY_LIMIT) return
-
-      localStorage.setItem(memoryKey(player), raw)
-      memories[player] = {
-        label: typeof data.label === 'string' ? data.label : undefined,
-        bytes: raw.length,
-        savedAt: Date.now()
-      }
-    } catch {
-      // localStorage เต็มหรือถูกปิด — ปล่อยผ่าน ไม่ให้เกมสะดุด
-    }
-  }
-
-  function refreshMemory(player: Player): void {
-    if (!import.meta.client) return
-
-    const raw = (() => {
-      try {
-        return localStorage.getItem(memoryKey(player))
-      } catch {
-        return null
-      }
-    })()
-
-    if (!raw) {
-      memories[player] = null
-      return
-    }
-
-    try {
-      const data = JSON.parse(raw) as AgentMemory
-      memories[player] = {
-        label: typeof data.label === 'string' ? data.label : undefined,
-        bytes: raw.length,
-        savedAt: 0
-      }
-    } catch {
-      memories[player] = null
-    }
-  }
-
-  function clearMemory(player: Player): void {
-    if (!import.meta.client) return
-
-    try {
-      localStorage.removeItem(memoryKey(player))
-    } catch {
-      // ไม่ต้องทำอะไร
-    }
-
-    memories[player] = null
-  }
-
-  /** เพิ่มค่าทุกครั้งที่เกมถูกรีเซ็ต/หยุด เพื่อทิ้งผลลัพธ์ที่ค้างอยู่ */
-  let generation = 0
 
   const validMoves = computed<Move[]>(() =>
     status.value === 'playing' || status.value === 'paused' ? getValidMoves(board.value, current.value) : []
@@ -308,369 +744,58 @@ export function useOthelloGame() {
     () => status.value === 'playing' && sides[current.value].kind === 'human' && !isBusy.value
   )
 
-  // ---------- ตัวช่วยภายใน ----------
-
-  function snapshot(): Snapshot {
-    return {
-      board: cloneBoard(board.value),
-      current: current.value,
-      turn: turn.value,
-      lastMove: lastMove.value ? { ...lastMove.value } : null,
-      log: log.value.map((entry) => ({ ...entry }))
-    }
-  }
-
-  function stopTraces() {
-    for (const player of [BLACK, WHITE] as Player[]) {
-      traces[player].running = false
-      traces[player].method = null
-      traces[player].depth = 0
-    }
-  }
-
-  function fail(message: string) {
-    generation++
-    thinking.value = null
-    stopTraces()
-    error.value = message
-    status.value = 'error'
-  }
-
-  function buildTurnState(player: Player): TurnState {
-    return {
-      board: cloneBoard(board.value),
-      player,
-      opponent: opponent(player),
-      validMoves: getValidMoves(board.value, player),
-      turn: turn.value,
-      lastMove: lastMove.value ? { ...lastMove.value } : null,
-      timeBudget: TURN_BUDGET
-    }
-  }
-
-  function finish() {
-    status.value = 'finished'
-    thinking.value = null
-    stopTraces()
-
-    const result = countDiscs(board.value)
-    const champion = result.black === result.white ? null : result.black > result.white ? BLACK : WHITE
-
-    for (const player of [BLACK, WHITE] as Player[]) {
-      runners[player]?.notifyEnd(cloneBoard(board.value), champion)
-    }
-  }
-
-  /** ลงหมากจริง แล้วส่งตาต่อไป (จัดการกรณีต้องผ่านตาให้ด้วย) */
-  function commitMove(row: number, col: number) {
-    const player = current.value
-    const move = findMove(getValidMoves(board.value, player), row, col)
-
-    if (!move) {
-      fail(`ตา ${toNotation(row, col)} ผิดกติกา`)
-      return
-    }
-
-    history.push(snapshot())
-
-    const next = cloneBoard(board.value)
-    next[row]![col] = player
-    for (const [r, c] of move.flips) next[r]![c] = player
-
-    board.value = next
-    lastMove.value = { row, col }
-    log.value = [
-      ...log.value,
-      { turn: turn.value, player, notation: toNotation(row, col), flips: move.flips.length, pass: false }
-    ]
-    turn.value++
-
-    const foe = opponent(player)
-
-    if (hasValidMove(next, foe)) {
-      current.value = foe
-    } else if (hasValidMove(next, player)) {
-      log.value = [
-        ...log.value,
-        { turn: turn.value, player: foe, notation: '—', flips: 0, pass: true }
-      ]
-      current.value = player
-    } else {
-      finish()
-      return
-    }
-
-    void driveTurn()
-  }
-
-  /** ถ้าตาปัจจุบันเป็นของฝั่งโค้ด ให้ไปขอคำตอบจาก worker */
-  async function driveTurn(): Promise<void> {
-    if (status.value !== 'playing') return
-
-    const player = current.value
-    if (sides[player].kind !== 'code') return
-
-    const runner = runners[player]
-    if (!runner || !runner.alive) {
-      fail('agent หยุดทำงานไปแล้ว กด "เริ่มใหม่" เพื่อโหลดโค้ดอีกครั้ง')
-      return
-    }
-
-    const gen = generation
-    thinking.value = player
-
-    Object.assign(traces[player], emptyTrace(), { running: true, method: 'chooseMove', depth: 1 })
-
-    try {
-      const [move] = await Promise.all([runner.chooseMove(buildTurnState(player)), wait(speed.value)])
-
-      if (gen !== generation || status.value !== 'playing') return
-
-      thinking.value = null
-      traces[player].running = false
-      traces[player].method = null
-      commitMove(move.row, move.col)
-    } catch (caught) {
-      if (gen !== generation) return
-      const label = player === BLACK ? 'ดำ' : 'ขาว'
-      fail(`โค้ดฝั่ง${label}: ${caught instanceof Error ? caught.message : String(caught)}`)
-    }
-    // ไม่เคลียร์ thinking ตรงนี้ เพราะถ้าอีกฝ่ายต้องผ่านตา
-    // driveTurn รอบถัดไปของผู้เล่นคนเดิมอาจเริ่มคิดไปแล้ว
-  }
-
-  function disposeRunners() {
-    for (const player of [BLACK, WHITE] as Player[]) {
-      runners[player]?.dispose()
-      runners[player] = null
-    }
-  }
-
-  // ---------- คำสั่งที่ UI เรียกใช้ ----------
-
-  /** โหลดโค้ดของทุกฝั่งที่เป็น code แล้วเริ่มเกมใหม่ */
-  async function start(): Promise<void> {
-    generation++
-    disposeRunners()
-
-    board.value = createBoard()
-    current.value = BLACK
-    turn.value = 1
-    lastMove.value = null
-    log.value = []
-    error.value = null
-    thinking.value = null
-    history.length = 0
-
-    for (const player of [BLACK, WHITE] as Player[]) {
-      Object.assign(traces[player], emptyTrace())
-    }
-
-    for (const player of [BLACK, WHITE] as Player[]) {
-      if (sides[player].kind !== 'code') continue
-
-      const runner = createRunner(player)
-
-      try {
-        sides[player].agentName = await runner.start()
-        runner.notifyStart(player)
-        runners[player] = runner
-      } catch (caught) {
-        runner.dispose()
-        const label = player === BLACK ? 'ดำ' : 'ขาว'
-        fail(`โค้ดฝั่ง${label}: ${caught instanceof Error ? caught.message : String(caught)}`)
-        return
-      }
-    }
-
-    status.value = 'playing'
-    void driveTurn()
-  }
-
-  /**
-   * โปรแกรมของฝั่งนี้เรียนรู้ข้ามเกมได้ไหม
-   * ฝั่งบล็อกดูจากว่ามีบล็อก "จำไว้ข้ามเกม" หรือเปล่า ฝั่งโค้ดดูจากการเรียก saveMemory() ในโค้ดที่เขียนเอง
-   * (ดูจากโค้ดที่แปลงแล้วไม่ได้ เพราะตัวช่วยกลางที่ระบบเติมให้ก็มีคำนี้อยู่)
-   */
   const learns = (player: Player): boolean =>
     sides[player].author === 'blocks'
       ? usesBlock(blocks[player].program, ['remember', 'forget'])
       : sides[player].code.includes('saveMemory(')
 
-  /** จำนวนครั้งที่แต่ละบล็อกของฝั่งนั้นทำงาน */
   const blockCounts = (player: Player): Record<BlockId, number> =>
     sides[player].author === 'blocks' ? blocks[player].blockCounts(traces[player].lines) : {}
-
-  function createRunner(player: Player, persist = true): AgentRunner {
-    return new AgentRunner(sourceOf(player), {
-      memory: readMemory(player),
-      onMemory: (data) => {
-        if (persist) writeMemory(player, data)
-      },
-      onLog: (lines) => {
-        const next = [...logs[player], ...lines]
-        logs[player] = next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next
-      },
-      onTrace: (tick) => {
-        const trace = traces[player]
-        trace.method = tick.method
-        trace.depth = tick.depth
-        trace.calls = tick.calls
-
-        if (tick.line > 0) {
-          trace.line = tick.line
-          const id = blocks[player].blockAtLine(tick.line)
-          if (id) activeBlocks[player] = id
-        }
-      },
-      onSummary: (summary) => {
-        const trace = traces[player]
-        trace.counts = summary.counts
-        trace.calls = summary.calls
-        trace.ms = summary.ms
-        trace.lines = summary.lines
-        trace.method = null
-        trace.running = false
-      }
-    })
-  }
-
-  // ---------- โหมดฝึกซ้อม ----------
-
-  /** เล่นหนึ่งเกมให้จบโดยไม่ผ่านสถานะของหน้าจอ ใช้เฉพาะตอนฝึกซ้อม */
-  async function playHeadless(pair: Record<Player, AgentRunner>): Promise<Player | null> {
-    let table = createBoard()
-    let side: Player = BLACK
-    let ply = 1
-    let previous: { row: number; col: number } | null = null
-
-    for (const player of [BLACK, WHITE] as Player[]) pair[player].notifyStart(player)
-
-    while (ply < 200 && training.running) {
-      const moves = getValidMoves(table, side)
-
-      if (moves.length === 0) {
-        if (!hasValidMove(table, opponent(side))) break
-        side = opponent(side)
-        continue
-      }
-
-      const move = await pair[side].chooseMove({
-        board: cloneBoard(table),
-        player: side,
-        opponent: opponent(side),
-        validMoves: moves,
-        turn: ply,
-        lastMove: previous,
-        timeBudget: TRAIN_BUDGET
-      })
-
-      table = applyMove(table, move, side)
-      previous = move
-      side = opponent(side)
-      ply++
-    }
-
-    const result = countDiscs(table)
-    const champion = result.black === result.white ? null : result.black > result.white ? BLACK : WHITE
-
-    for (const player of [BLACK, WHITE] as Player[]) pair[player].notifyEnd(cloneBoard(table), champion)
-
-    // ให้ worker ได้ประมวลผล onGameEnd แล้วส่ง saveMemory กลับมาให้ครบ
-    // ก่อนจะขึ้นเกมถัดไปหรือปิด worker ทิ้ง
-    await wait(30)
-
-    board.value = table
-    return champion
-  }
-
-  /**
-   * ให้โค้ดสองฝั่งซ้อมกันเองหลายเกมรวด โดยใช้ worker ชุดเดิมตลอด
-   * agent จึงสะสมความรู้ข้ามเกมได้ และระบบจะเก็บ saveMemory() ลงเครื่องให้ทุกครั้ง
-   */
-  async function train(games: number, focus: TrainFocus = 'both'): Promise<void> {
-    if (training.running) return
-
-    if (sides[BLACK].kind !== 'code' || sides[WHITE].kind !== 'code') {
-      training.error = 'ต้องตั้งให้ทั้งสองฝั่งเป็นบอทก่อนถึงจะฝึกได้'
-      return
-    }
-
-    reset()
-
-    training.running = true
-    training.done = 0
-    training.total = games
-    training.blackWins = 0
-    training.whiteWins = 0
-    training.draws = 0
-    training.focus = focus
-    training.error = null
-
-    const pair = {} as Record<Player, AgentRunner>
-
-    try {
-      for (const player of [BLACK, WHITE] as Player[]) {
-        // ฝึกฝั่งเดียว = อีกฝั่งเล่นด้วยแต่ไม่จำอะไรกลับไป คู่ซ้อมจึงนิ่งตลอดการฝึก
-        const runner = createRunner(player, focus === 'both' || focus === player)
-        sides[player].agentName = await runner.start()
-        pair[player] = runner
-      }
-
-      for (let game = 0; game < games && training.running; game++) {
-        const champion = await playHeadless(pair)
-
-        if (champion === BLACK) training.blackWins++
-        else if (champion === WHITE) training.whiteWins++
-        else training.draws++
-
-        training.done++
-      }
-    } catch (caught) {
-      training.error = caught instanceof Error ? caught.message : String(caught)
-    } finally {
-      // รอข้อความบันทึกความจำของเกมสุดท้ายให้มาถึงก่อนปิด worker
-      await wait(100)
-
-      for (const player of [BLACK, WHITE] as Player[]) pair[player]?.dispose()
-      training.running = false
-      board.value = createBoard()
-    }
-  }
 
   function stopTraining(): void {
     training.running = false
   }
 
-  /** ผู้เล่นคนคลิกลงหมาก */
+  const start = (): Promise<void> => startGame(game)
+
+  const testCode = (code: string): Promise<{ ok: boolean; message: string }> => probeCode(code)
+
+  const setAuthor = (player: Player, mode: AuthorMode): void => switchAuthor(game, player, mode)
+
+  const clearMemoryOf = (player: Player): void => clearMemory(game, player)
+
+  const refreshMemoryOf = (player: Player): void => refreshMemory(game, player)
+
+  const trainGames = (games: number, focus: TrainFocus = 'both'): Promise<void> =>
+    train(game, games, focus)
+
   function play(row: number, col: number): void {
     if (!isHumanTurn.value) return
     if (!findMove(validMoves.value, row, col)) return
-    commitMove(row, col)
+    commitMove(game, row, col)
   }
 
   function pause(): void {
     if (status.value !== 'playing') return
-    generation++
+    game.generation++
     thinking.value = null
-    stopTraces()
+    stopTraces(game)
     status.value = 'paused'
   }
 
   function resume(): void {
     if (status.value !== 'paused') return
     status.value = 'playing'
-    void driveTurn()
+    void driveTurn(game)
   }
 
-  /** ย้อนกลับหนึ่งตา แล้วพักเกมไว้ให้กดเล่นต่อเอง */
   function undo(): void {
     const previous = history.pop()
     if (!previous) return
 
-    generation++
+    game.generation++
     thinking.value = null
-    stopTraces()
+    stopTraces(game)
 
     board.value = previous.board
     current.value = previous.current
@@ -682,8 +807,8 @@ export function useOthelloGame() {
   }
 
   function reset(): void {
-    generation++
-    disposeRunners()
+    game.generation++
+    disposeRunners(game)
 
     board.value = createBoard()
     current.value = BLACK
@@ -695,80 +820,39 @@ export function useOthelloGame() {
     history.length = 0
     status.value = 'setup'
 
-    for (const player of [BLACK, WHITE] as Player[]) {
-      Object.assign(traces[player], emptyTrace())
-    }
-  }
-
-  /** ลองคอมไพล์โค้ดและขอหนึ่งตาบนกระดานเริ่มต้น เพื่อเช็กก่อนเริ่มเกมจริง */
-  async function testCode(code: string): Promise<{ ok: boolean; message: string }> {
-    const runner = new AgentRunner(code)
-
-    try {
-      const name = await runner.start()
-      const fresh = createBoard()
-      const move = await runner.chooseMove({
-        board: fresh,
-        player: BLACK,
-        opponent: WHITE,
-        validMoves: getValidMoves(fresh, BLACK),
-        turn: 1,
-        lastMove: null
-      })
-
-      return { ok: true, message: `"${name}" ทำงานได้ — ตาแรกที่เลือกคือ ${toNotation(move.row, move.col)}` }
-    } catch (caught) {
-      return { ok: false, message: caught instanceof Error ? caught.message : String(caught) }
-    } finally {
-      runner.dispose()
-    }
+    for (const player of PLAYERS) Object.assign(traces[player], emptyTrace())
   }
 
   function setSide(player: Player, patch: Partial<SideConfig>): void {
     Object.assign(sides[player], patch)
   }
 
-  /**
-   * สลับวิธีเขียนโปรแกรมของฝั่งนั้น แล้วแปลงของเดิมตามไปด้วย
-   * บล็อก -> โค้ด: เอาโค้ดที่บล็อกแปลงไว้ไปเขียนต่อ
-   * โค้ด -> บล็อก: อ่านโค้ดกลับมาเป็นบล็อก
-   */
-  function setAuthor(player: Player, mode: AuthorMode): void {
-    if (sides[player].author === mode) return
-
-    if (mode === 'code') {
-      sides[player].code = blocks[player].generated.value.code
-      sides[player].agentName = blocks[player].program.name
-    } else {
-      const imported = importProgram(sides[player].code, OTHELLO_PACK)
-
-      if (!imported.ok || !imported.program) {
-        error.value = `ฝั่ง${player === BLACK ? 'ดำ' : 'ขาว'}: ${imported.message}`
-        return
-      }
-
-      blocks[player].replaceProgram(imported.program)
-      error.value = null
-    }
-
-    sides[player].author = mode
-  }
-
   function useTemplate(player: Player, templateId: string): void {
     const template = findTemplate(templateId)
     if (!template) return
     setSide(player, { templateId, code: template.code, agentName: template.name })
-    refreshMemory(player)
+  }
+
+  /**
+   * ความจำผูกกับ "โปรแกรมไหน" ไม่ใช่ "ฝั่งไหน" — คีย์จึงมีทั้งโหมดเขียน ตัวอย่างบล็อก และเทมเพลตโค้ดอยู่ในนั้น
+   * เปลี่ยนโปรแกรมเมื่อไรก็ต้องไปอ่านความจำของโปรแกรมใหม่ทันที ไม่งั้นการ์ดจะโชว์ของเก่าหรือโชว์ว่าง
+   * ทั้งที่ของที่ฝึกไว้ยังอยู่ในเครื่อง
+   */
+  for (const player of PLAYERS) {
+    watch(
+      () => memoryKey(game, player),
+      () => refreshMemory(game, player)
+    )
   }
 
   onMounted(() => {
-    for (const player of [BLACK, WHITE] as Player[]) refreshMemory(player)
+    for (const player of PLAYERS) refreshMemory(game, player)
   })
 
-  onScopeDispose(disposeRunners)
+  onScopeDispose(() => disposeRunners(game))
 
   return {
-    // สถานะ
+
     logs,
     clearLogs,
     blocks,
@@ -796,7 +880,7 @@ export function useOthelloGame() {
     canUndo,
     isHumanTurn,
     isBusy,
-    // คำสั่ง
+
     start,
     play,
     pause,
@@ -807,9 +891,9 @@ export function useOthelloGame() {
     setSide,
     setAuthor,
     useTemplate,
-    train,
+    train: trainGames,
     stopTraining,
-    refreshMemory,
-    clearMemory
+    refreshMemory: refreshMemoryOf,
+    clearMemory: clearMemoryOf
   }
 }

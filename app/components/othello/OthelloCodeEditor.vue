@@ -47,7 +47,6 @@ async function runTest() {
   }
 }
 
-/** ให้กด Tab แล้วได้ย่อหน้าแทนการย้าย focus */
 function onTab(event: KeyboardEvent) {
   const target = event.target as HTMLTextAreaElement
   const start = target.selectionStart

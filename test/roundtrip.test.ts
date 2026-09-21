@@ -1,22 +1,36 @@
-/**
- * บล็อก → โค้ด → บล็อก → โค้ด ต้องได้โค้ดเดิมเป๊ะทุกตัวอักษร
- *
- * นี่คือสัญญาหลักของระบบ ถ้าข้อนี้พัง ผู้เล่นสลับโหมดแล้วโปรแกรมจะเพี้ยนหรือหาย
- * (เคยพังมาแล้วตอนตัวอย่างไม่ถูก normalize — บล็อกที่หย่อนลงหัวที่ไม่มีในตัวอย่างหายเงียบ)
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { generate } from '~/game/blocks/codegen'
 import { importProgram } from '~/game/blocks/importer'
 import { normalize } from '~/game/blocks/pack'
-import { CATEGORY_LABEL, CATEGORY_ORDER, fits, findSpec, type BlockNode } from '~/game/blocks/types'
+import {
+  CATEGORY_LABEL,
+  CATEGORY_ORDER,
+  fits,
+  findSpec,
+  type BlockNode,
+  type ValueType
+} from '~/game/blocks/types'
 import { createBlock } from '~/game/blocks/program'
+import { CHASE_PACK } from '~/game/chase/blocks/pack'
+import { DINO_PACK } from '~/game/dino/blocks/pack'
+import { RUNNER_PACK } from '~/game/chase/blocks/runner'
+import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
+import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 import { countBlocks, countRaw, presetsOf, walkBlocks } from './helpers'
 
-const ALL = [...presetsOf(MAZE_PACK), ...presetsOf(OTHELLO_PACK)]
+const ALL = [
+  ...presetsOf(MAZE_PACK),
+  ...presetsOf(OTHELLO_PACK),
+  ...presetsOf(HANOI_PACK),
+  ...presetsOf(CHASE_PACK),
+  ...presetsOf(RUNNER_PACK),
+  ...presetsOf(DINO_PACK),
+  ...presetsOf(LINE_PACK)
+]
 
 for (const { pack, preset, title } of ALL) {
   test(`${title} — บล็อก→โค้ด→บล็อก→โค้ด ได้โค้ดเดิมเป๊ะ`, () => {
@@ -47,7 +61,7 @@ for (const { pack, preset, title } of ALL) {
   })
 
   test(`${title} — lineOf กับ blockOf เป็นคู่ผกผันกัน`, () => {
-    // หน้าจอย้อนจาก "บรรทัดที่กำลังรัน" กลับมาไฮไลต์บล็อก ถ้าสองอันนี้ไม่ตรงกันจะไฮไลต์ผิดตัว
+
     const { lineOf, blockOf } = generate(normalize(preset.build(), pack), pack)
     for (const [blockId, line] of Object.entries(lineOf)) {
       assert.equal(blockOf[line], blockId, `บรรทัด ${line} ชี้กลับไปคนละบล็อก`)
@@ -63,7 +77,7 @@ for (const { pack, preset, title } of ALL) {
   })
 
   test(`${title} — มีช่องครบทุกหัวบล็อกของเกม`, () => {
-    // normalize ต้องเติมหัวที่ตัวอย่างไม่ได้เขียนไว้ ไม่งั้นหย่อนบล็อกลงหัวนั้นแล้วหายเงียบ
+
     const program = normalize(preset.build(), pack)
     for (const hat of pack.hats) {
       assert.ok(hat.kind in program.scripts, `ไม่มีช่องของหัวบล็อก '${hat.kind}'`)
@@ -71,9 +85,9 @@ for (const { pack, preset, title } of ALL) {
   })
 }
 
-for (const pack of [MAZE_PACK, OTHELLO_PACK]) {
+for (const pack of [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK]) {
   test(`${pack.id} — กล่องเครื่องมือใช้ชื่อหมวดและลำดับของระบบ`, () => {
-    // เกมตั้งชื่อหมวดเองไม่ได้ ไม่งั้นสองเกมหน้าตาไม่เหมือนกัน
+
     const order = pack.palette.map((group) => group.category)
     assert.deepEqual(order, [...order].sort(
       (a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)
@@ -95,9 +109,6 @@ for (const pack of [MAZE_PACK, OTHELLO_PACK]) {
   })
 }
 
-// ---------- บล็อกข้อความ ----------
-
-/** ต่อบล็อกสั้น ๆ ในเขาวงกตแล้วส่งไปกลับหนึ่งรอบ */
 function trip(nodes: BlockNode[]) {
   const program = normalize({ name: 'ลองข้อความ', scripts: { 'maze.on-turn': nodes } }, MAZE_PACK)
   const first = generate(program, MAZE_PACK)
@@ -148,7 +159,7 @@ test('ต่อข้อความ ไปกลับแล้วยังเ�
 })
 
 test('บวกเลขธรรมดาไม่กลายเป็นต่อข้อความ', () => {
-  // "ต่อข้อความ" เขียนออกมาเป็น `${a}${b}` ส่วน "คำนวณ" เป็น a + b จึงแยกกันได้
+
   const sum = createBlock('math')
   sum.fields.op = 'add'
   sum.inputs.left = createBlock('number')
@@ -165,7 +176,7 @@ test('บวกเลขธรรมดาไม่กลายเป็นต�
 })
 
 test('ช่องที่รับตัวเลขไม่รับบล็อกข้อความ', () => {
-  // ชนิดค่าต้องกันไม่ให้หย่อนข้อความลงช่องตัวเลข ไม่งั้นโค้ดที่ได้จะคำนวณเพี้ยน
+
   assert.equal(fits('string', 'number'), false)
   assert.equal(fits('string', 'check'), false)
   assert.equal(fits('string', 'any'), true)
@@ -173,8 +184,8 @@ test('ช่องที่รับตัวเลขไม่รับบล�
 })
 
 test('createBlock ตั้งค่าเริ่มต้นให้ทุกช่องที่บล็อกประกาศไว้', () => {
-  // ลืมชนิดใหม่ใน createBlock แล้วจะได้ node ที่ขาดคีย์ ซึ่งไปโผล่เป็นค่าว่างแบบเงียบ ๆ ทีหลัง
-  for (const pack of [MAZE_PACK, OTHELLO_PACK]) {
+
+  for (const pack of [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK]) {
     const kinds = [...pack.palette.flatMap((group) => group.kinds), ...pack.hats.map((hat) => hat.kind)]
 
     for (const kind of kinds) {
@@ -193,3 +204,53 @@ test('createBlock ตั้งค่าเริ่มต้นให้ทุ�
     }
   }
 })
+
+// ---------- บล็อกทุกตัว ไม่ใช่เฉพาะตัวที่ตัวอย่างใช้ ----------
+
+/** บล็อกค่าที่เอาไว้เสียบรูให้เต็ม — รูที่ปล่อยว่างจะได้ค่าสำรองซึ่งอ่านกลับมาเป็นบล็อกเพิ่ม */
+function filler(accepts?: ValueType): BlockNode {
+  if (accepts === 'check') return createBlock('bool')
+  if (accepts === 'string') return createBlock('text')
+  return createBlock('number')
+}
+
+/** สร้างบล็อกพร้อมเสียบรูทุกรูให้เต็ม */
+function ready(kind: string): BlockNode {
+  const node = createBlock(kind)
+
+  for (const part of findSpec(kind)!.parts) {
+    if (part.type === 'input') node.inputs[part.name] = filler(part.accepts)
+  }
+
+  return node
+}
+
+/**
+ * ตัวอย่างสำเร็จรูปใช้บล็อกไม่ครบทุกตัว บล็อกที่ไม่มีใครใช้จึงไม่เคยถูกอ่านกลับเลยสักครั้ง
+ * ชุดนี้หย่อนบล็อกทีละตัวลงโปรแกรมเปล่าแล้วส่งไปกลับ — ลืมเขียนตัวจับคู่ของบล็อกใหม่เมื่อไรจะฟ้องทันที
+ */
+for (const pack of [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK]) {
+  const hat = pack.hats[0]!.kind
+
+  for (const kind of pack.palette.flatMap((group) => group.kinds)) {
+    const spec = findSpec(kind)!
+
+    test(`${pack.id}/${kind} — บล็อกเดี่ยว ไปกลับแล้วได้โค้ดเดิม`, () => {
+      // บล็อกค่าเสียบลงในรูของบล็อก "พิมพ์ลงคอนโซล" เพราะวางเดี่ยว ๆ เป็นคำสั่งไม่ได้
+      const node = ready(kind)
+      const statement = spec.shape === 'value' ? createBlock('log') : node
+      if (spec.shape === 'value') statement.inputs.value = node
+
+      const program = normalize({ name: 'ลองบล็อกเดี่ยว', scripts: { [hat]: [statement] } }, pack)
+      const first = generate(program, pack)
+
+      const imported = importProgram(first.code, pack)
+      assert.ok(imported.ok, `อ่านโค้ดกลับไม่ได้: ${imported.message}`)
+      assert.equal(countRaw(imported.program), 0, `บล็อก '${kind}' ไม่มีตัวจับคู่ จึงกลายเป็นบล็อก "โค้ดของฉัน"`)
+
+      const again = generate(normalize(imported.program, pack), pack)
+      assert.equal(again.code, first.code)
+      assert.equal(countBlocks(imported.program), countBlocks(program))
+    })
+  }
+}

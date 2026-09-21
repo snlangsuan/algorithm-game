@@ -4,18 +4,14 @@ import type { BlockPack, BlockProgram } from './pack'
 
 export interface GeneratedCode {
   code: string
-  /** บล็อกไหนกลายเป็นโค้ดบรรทัดไหน */
+
   lineOf: Record<BlockId, number>
-  /** บรรทัดไหนมาจากบล็อกไหน — ใช้ย้อนกลับมาไฮไลต์บล็อกที่กำลังทำงาน */
+
   blockOf: Record<number, BlockId>
 }
 
 const escape = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 
-/**
- * แปลงโปรแกรมบล็อกเป็นโค้ด JavaScript ที่รันได้จริง
- * ตัวแปลงเป็นกลาง ไม่รู้จักเกมไหนเป็นพิเศษ — รายละเอียดของเกมอยู่ใน pack.target
- */
 export function generate(program: BlockProgram, pack: BlockPack): GeneratedCode {
   const lines: string[] = []
   const lineOf: Record<BlockId, number> = {}
@@ -76,7 +72,6 @@ export function generate(program: BlockProgram, pack: BlockPack): GeneratedCode 
   push(`vars = { a: 0, b: 0, c: 0 }`)
   push('')
 
-  // หนึ่งหัวบล็อก = หนึ่งเมธอดของ agent
   const written = pack.target.methods.filter(
     (method) => !method.skipWhenEmpty || (program.scripts[method.hat.kind]?.length ?? 0) > 0
   )
@@ -95,7 +90,6 @@ export function generate(program: BlockProgram, pack: BlockPack): GeneratedCode 
     })
   }
 
-  // ตัวช่วยกลางกับของเกม เขียนไว้ตายตัว ต่อเป็นข้อความทีเดียวแล้วนับบรรทัดตาม
   for (const line of CORE_HELPERS.split('\n')) lines.push(line)
   for (const line of pack.target.helpers.split('\n')) lines.push(line)
 

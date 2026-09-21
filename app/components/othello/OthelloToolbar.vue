@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { SPEEDS, type GameStatus } from '~/composables/useOthelloGame'
+import { SPEEDS } from '~/game/othello/pace'
+import type { GameStatus } from '~/composables/useOthelloGame'
 
 defineProps<{ status: GameStatus; canUndo: boolean; starting: boolean; showSpeed: boolean }>()
 

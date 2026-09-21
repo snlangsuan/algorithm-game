@@ -8,9 +8,9 @@ const props = withDefaults(
   defineProps<{
     program: BlockProgram
     pack: BlockPack
-    /** บล็อกที่กำลังทำงาน */
+
     activeId?: BlockId | null
-    /** จำนวนครั้งที่แต่ละบล็อกทำงาน */
+
     counts?: Record<BlockId, number>
     editable?: boolean
     running?: boolean
@@ -27,10 +27,6 @@ provide(BLOCK_RUNTIME, runtime)
 
 const total = computed(() => countProgram(props.program))
 
-/**
- * ทุกหัวบล็อกของเกมนี้ ("เมื่อ...") พร้อมลำดับคำสั่งของตัวเอง
- * หัวบล็อกลากหรือลบไม่ได้ มีอยู่ตายตัวตามที่เกมประกาศไว้
- */
 const scripts = computed(() =>
   props.pack.hats.map((hat) => ({
     kind: hat.kind,
@@ -41,7 +37,6 @@ const scripts = computed(() =>
 
 const scroller = ref<HTMLDivElement | null>(null)
 
-/** เลื่อนบล็อกที่กำลังทำงานให้อยู่ในกรอบ */
 watch(
   () => props.activeId,
   async (id) => {
@@ -77,15 +72,9 @@ watch(
     </div>
 
     <div ref="scroller" class="min-h-0 flex-1 overflow-auto p-2">
-      <!-- หนึ่งหัวบล็อก = หนึ่งช่วงงาน บล็อกข้างในย่อหน้าเข้ามาให้เห็นว่าอยู่ใต้หัวไหน -->
       <section v-for="(script, index) in scripts" :key="script.kind" :class="index > 0 ? 'mt-5' : ''">
         <BlockPiece :node="script.node" />
 
-        <!--
-          สันสีเดียวกับหัว ลากจากขอบซ้ายของหัวลงมา เหมือนตัวหัวยืดคลุมทั้งช่วง
-          บล็อกลูกเริ่มถัดจากสันไป 6px ร่องของมันจึงอยู่ที่ 6 + 14 = 20px
-          (ตำแหน่ง absolute วัดจากขอบในของกรอบ เส้นสันซ้ายจึงไม่ถูกนับรวม)
-        -->
         <div class="relative -mt-px rounded-bl-lg border-l-[10px] border-yellow-500 pb-2 pl-1.5">
           <span
             class="pointer-events-none absolute left-5 top-0 z-10 h-[6px] w-6 rounded-b-[5px] bg-yellow-500"

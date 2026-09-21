@@ -3,10 +3,9 @@ import { CATEGORY_LABEL, CATEGORY_ORDER } from '~/game/blocks/types'
 
 useSeoMeta({
   title: 'เลือกเกม — Algorithm Game',
-  description: 'เขาวงกตกับ Othello — เลือกเกมแล้วต่อบล็อกให้บอทเล่นเอง'
+  description: 'เขาวงกต Othello และหอคอยฮานอย — เลือกเกมแล้วต่อบล็อกให้บอทเล่นเอง'
 })
 
-/** หมวดบล็อกเป็นชุดเดียวกันทุกเกม เลยบอกไว้ตรงนี้ครั้งเดียว */
 const categories = CATEGORY_ORDER.map((category) => CATEGORY_LABEL[category])
 </script>
 
@@ -27,7 +26,7 @@ const categories = CATEGORY_ORDER.map((category) => CATEGORY_LABEL[category])
         <div>
           <h2 class="text-base font-semibold text-ink">บล็อกแบ่งเป็นสี่หมวด</h2>
           <p class="mt-2 text-sm leading-relaxed text-ink-muted">
-            เหมือนกันทั้งสองเกม ต่างกันแค่คำศัพท์ข้างใน จำที่เดียวใช้ได้ทั้งคู่
+            เหมือนกันทุกเกม ต่างกันแค่คำศัพท์ข้างใน จำที่เดียวใช้ได้หมด
           </p>
 
           <ol class="mt-4 space-y-1.5">
@@ -43,10 +42,9 @@ const categories = CATEGORY_ORDER.map((category) => CATEGORY_LABEL[category])
         </div>
 
         <div>
-          <h2 class="text-base font-semibold text-ink">ตัวอย่างสำเร็จรูปแก้ไม่ได้</h2>
+          <h2 class="text-base font-semibold text-ink">ตัวอย่างสำเร็จรูป</h2>
           <p class="mt-2 text-sm leading-relaxed text-ink-muted">
-            ตัวอย่างที่ให้มาเป็นของอ้างอิง กดดูได้ตลอดว่าเขาทำกันยังไง
-            อยากแก้ก็กด "คัดลอกไปแก้" จะได้สำเนาที่เป็นของตัวเอง ตัวอย่างเดิมยังอยู่ครบ
+            กดดูได้ตลอดว่าเขาทำกันยังไง อยากแก้ก็กด "คัดลอกไปแก้" จะได้สำเนาที่เป็นของตัวเอง
           </p>
         </div>
       </div>

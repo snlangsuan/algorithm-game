@@ -9,7 +9,6 @@ const emit = defineEmits<{ trash: [] }>()
 
 const { start, end, dragging } = useBlockDrag()
 
-/** ตัวอย่างบล็อกของแต่ละชนิด สร้างครั้งเดียวไว้โชว์ในกล่องเครื่องมือ */
 const groups = props.pack.palette.map((group) => {
   const items = group.kinds
     .filter((kind) => Boolean(findSpec(kind)))
@@ -17,7 +16,7 @@ const groups = props.pack.palette.map((group) => {
 
   return {
     ...group,
-    // แยกตามรูปทรง คนเลือกจะได้รู้ว่าอันไหนต่อเป็นลำดับ อันไหนเสียบลงในช่อง
+
     sections: [
       { label: 'คำสั่ง — ต่อกันลงมา', items: items.filter((item) => item.spec.shape === 'statement') },
       {
@@ -44,7 +43,6 @@ const groups = props.pack.palette.map((group) => {
 
 const overTrash = ref(false)
 
-/** โชว์ทีละหมวด กล่องเครื่องมือจะได้ไม่ยาวจนต้องเลื่อนหา */
 const active = ref(groups[0]?.id ?? '')
 const shown = computed(() => groups.find((group) => group.id === active.value) ?? groups[0])
 
@@ -92,7 +90,7 @@ function onTrash() {
             :draggable="!disabled"
             class="max-w-full"
             :class="disabled ? 'cursor-not-allowed opacity-40' : 'cursor-grab active:cursor-grabbing'"
-            :title="disabled ? 'ตัวอย่างสำเร็จรูปแก้ไม่ได้ — กด \'คัดลอกไปแก้\' ก่อน' : item.spec.hint"
+            :title="disabled ? 'กด \'คัดลอกไปแก้\' ก่อน' : item.spec.hint"
             @dragstart="onDragStart($event, item.kind)"
             @dragend="end()"
           >
@@ -102,7 +100,6 @@ function onTrash() {
       </section>
     </div>
 
-    <!-- ลากบล็อกมาทิ้งตรงนี้เพื่อลบ -->
     <div
       class="mt-3 flex shrink-0 items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-3 text-xs transition-colors"
       :class="

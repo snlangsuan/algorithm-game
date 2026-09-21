@@ -6,7 +6,7 @@ const props = defineProps<{
   winner: Player | null
   scores: DiscCount
   sides: Record<Player, SideConfig>
-  /** ชื่อโปรแกรมของแต่ละฝั่ง */
+
   names: Record<Player, string>
 }>()
 

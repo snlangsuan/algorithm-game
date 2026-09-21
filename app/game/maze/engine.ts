@@ -1,8 +1,3 @@
-/**
- * Maze engine — ฟังก์ชันบริสุทธิ์ล้วน ไม่ผูกกับ Vue หรือ DOM
- * ใช้ร่วมกันได้ทั้งฝั่ง UI และใน Web Worker ที่รันโค้ดของผู้เล่น
- */
-
 export const FLOOR = 0 as const
 export const WALL = 1 as const
 export const MUD = 2 as const
@@ -15,7 +10,6 @@ export interface Point {
   col: number
 }
 
-/** ต้นทุนของการก้าวเข้าไปเหยียบช่องแต่ละชนิด */
 export const COST_FLOOR = 1
 export const COST_MUD = 5
 
@@ -28,9 +22,9 @@ export interface MazeOptions {
   width: number
   height: number
   kind: MazeKind
-  /** สัดส่วนกำแพงของแบบ "อุปสรรคสุ่ม" (0..1) */
+
   density: number
-  /** สัดส่วนช่องโคลนบนพื้นที่เดินได้ (0..1) */
+
   mud: number
   seed: number
 }
@@ -54,15 +48,11 @@ export const DIRECTIONS = [
 
 export type Direction = (typeof DIRECTIONS)[number]['name']
 
-/** ช่องข้างเคียงพร้อมทิศและต้นทุนที่ต้องจ่ายเมื่อก้าวเข้าไป */
 export interface Neighbor extends Point {
   dir: Direction
   cost: number
 }
 
-// ---------- ตัวช่วยพื้นฐาน ----------
-
-/** ตัวสุ่มที่ผูกกับ seed — seed เดิมได้แผนที่เดิมเสมอ (mulberry32) */
 export function createRng(seed: number): () => number {
   let state = seed >>> 0
 
@@ -80,7 +70,6 @@ export const inside = (grid: Grid, row: number, col: number): boolean =>
 export const walkable = (grid: Grid, row: number, col: number): boolean =>
   inside(grid, row, col) && grid[row]![col] !== WALL
 
-/** ต้นทุนของการก้าวเข้าไปเหยียบช่องนี้ (กำแพง = Infinity) */
 export const stepCost = (grid: Grid, row: number, col: number): number => {
   if (!inside(grid, row, col)) return Infinity
   const cell = grid[row]![col]
@@ -113,15 +102,11 @@ export function neighbors(grid: Grid, row: number, col: number): Neighbor[] {
 
 export const findDirection = (name: string) => DIRECTIONS.find((dir) => dir.name === name)
 
-/** ขนาดที่รับได้: อยู่ในช่วง และเป็นเลขคี่เสมอ (แบบเขาวงกตต้องการกรอบกำแพง) */
 export const normalizeSize = (value: number): number => {
   const clamped = Math.min(MAX_SIZE, Math.max(MIN_SIZE, Math.round(value)))
   return clamped % 2 === 0 ? clamped - 1 : clamped
 }
 
-// ---------- ค้นหาเส้นทาง (ใช้ทั้งตอนสร้างแผนที่และตอนหาเฉลย) ----------
-
-/** คิวลำดับความสำคัญแบบ binary heap */
 class Heap<T> {
   private items: Array<{ value: T; priority: number }> = []
 
@@ -175,14 +160,10 @@ export const createHeap = <T>() => new Heap<T>()
 export interface SearchResult {
   path: Point[]
   cost: number
-  /** จำนวนช่องที่ถูกดึงออกจากคิวระหว่างค้นหา */
+
   expanded: number
 }
 
-/**
- * Dijkstra ทั่วไป — costOf คืนต้นทุนของการก้าวเข้าช่องนั้น หรือ null ถ้าเข้าไม่ได้
- * ตอนสร้างแผนที่จะส่ง costOf ที่ยอมให้ "ทะลุกำแพง" ด้วยราคาแพง เพื่อเจาะทางให้เดินถึงกันเสมอ
- */
 export function search(
   grid: Grid,
   start: Point,
@@ -240,17 +221,13 @@ export function search(
   return null
 }
 
-/** เส้นทางที่ต้นทุนต่ำที่สุดจริง ๆ ของแผนที่นี้ — ใช้เป็นเฉลยไว้เทียบคะแนน */
 export const solve = (maze: Maze): SearchResult | null =>
   search(maze.grid, maze.start, maze.goal, (cell) =>
     cell === WALL ? null : cell === MUD ? COST_MUD : COST_FLOOR
   )
 
-/** เส้นทางที่ "ก้าวน้อยที่สุด" โดยไม่สนต้นทุนโคลน */
 export const solveSteps = (maze: Maze): SearchResult | null =>
   search(maze.grid, maze.start, maze.goal, (cell) => (cell === WALL ? null : 1))
-
-// ---------- สร้างแผนที่ ----------
 
 const filled = (width: number, height: number, cell: Cell): Grid =>
   Array.from({ length: height }, () => Array.from({ length: width }, () => cell))
@@ -266,11 +243,6 @@ function shuffle<T>(items: T[], rng: () => number): T[] {
   return list
 }
 
-/**
- * เขาวงกตแท้ (perfect maze) ด้วย recursive backtracker
- * ช่องทางเดินอยู่ที่พิกัดคี่ ส่วนพิกัดคู่เป็นกำแพงกั้นระหว่างช่อง
- * ผลลัพธ์คือทุกช่องเดินถึงกันได้ และมีทางเดียวเท่านั้นระหว่างสองช่องใด ๆ
- */
 function carvePerfect(width: number, height: number, rng: () => number): Grid {
   const grid = filled(width, height, WALL)
   const startCell = { row: 1, col: 1 }
@@ -302,7 +274,6 @@ function carvePerfect(width: number, height: number, rng: () => number): Grid {
   return grid
 }
 
-/** ทุบกำแพงที่ปลายตัน ทำให้เขาวงกตมีวงวนและมีหลายเส้นทางให้เลือก */
 function braid(grid: Grid, rng: () => number, ratio: number): void {
   const height = grid.length
   const width = grid[0]?.length ?? 0
@@ -325,7 +296,6 @@ function braid(grid: Grid, rng: () => number, ratio: number): void {
   }
 }
 
-/** ทุ่งโล่งที่โปรยกำแพงสุ่ม — ใช้ฝึกอัลกอริทึมที่ต้องเลี่ยงสิ่งกีดขวาง */
 function scatterObstacles(width: number, height: number, density: number, rng: () => number): Grid {
   const grid = filled(width, height, FLOOR)
 
@@ -338,12 +308,8 @@ function scatterObstacles(width: number, height: number, density: number, rng: (
   return grid
 }
 
-/**
- * ถ้ำ: สุ่มเต็มพื้นที่แล้วเกลี่ยด้วย cellular automata
- * ได้โพรงกว้าง ๆ ที่เชื่อมกันแบบธรรมชาติ
- */
-function growCavern(width: number, height: number, density: number, rng: () => number): Grid {
-  let grid = filled(width, height, FLOOR)
+function seedCavern(width: number, height: number, density: number, rng: () => number): Grid {
+  const grid = filled(width, height, FLOOR)
 
   for (let row = 0; row < height; row++) {
     for (let col = 0; col < width; col++) {
@@ -352,31 +318,42 @@ function growCavern(width: number, height: number, density: number, rng: () => n
     }
   }
 
-  for (let pass = 0; pass < 4; pass++) {
-    const next = cloneGrid(grid)
+  return grid
+}
 
-    for (let row = 1; row < height - 1; row++) {
-      for (let col = 1; col < width - 1; col++) {
-        let walls = 0
+function wallsAround(grid: Grid, row: number, col: number): number {
+  let walls = 0
 
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            if (dr === 0 && dc === 0) continue
-            if (grid[row + dr]![col + dc] === WALL) walls++
-          }
-        }
-
-        next[row]![col] = walls > 4 ? WALL : FLOOR
-      }
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue
+      if (grid[row + dr]![col + dc] === WALL) walls++
     }
-
-    grid = next
   }
+
+  return walls
+}
+
+function smoothCavern(grid: Grid, width: number, height: number): Grid {
+  const next = cloneGrid(grid)
+
+  for (let row = 1; row < height - 1; row++) {
+    for (let col = 1; col < width - 1; col++) {
+      next[row]![col] = wallsAround(grid, row, col) > 4 ? WALL : FLOOR
+    }
+  }
+
+  return next
+}
+
+function growCavern(width: number, height: number, density: number, rng: () => number): Grid {
+  let grid = seedCavern(width, height, density, rng)
+
+  for (let pass = 0; pass < 4; pass++) grid = smoothCavern(grid, width, height)
 
   return grid
 }
 
-/** ช่องที่เดินได้ซึ่งอยู่ใกล้ตำแหน่งเป้าหมายที่สุด */
 function nearestOpen(grid: Grid, target: Point): Point {
   const height = grid.length
   const width = grid[0]?.length ?? 0
@@ -398,15 +375,10 @@ function nearestOpen(grid: Grid, target: Point): Point {
   return best
 }
 
-/**
- * การันตีว่าเดินจากจุดเริ่มถึงเป้าหมายได้เสมอ
- * ถ้ายังไปไม่ถึง จะเจาะกำแพงตามเส้นทางที่ "ทุบกำแพงน้อยที่สุด"
- */
 function ensureReachable(grid: Grid, start: Point, goal: Point): void {
   const reachable = search(grid, start, goal, (cell) => (cell === WALL ? null : 1))
   if (reachable) return
 
-  // ยอมให้ทะลุกำแพงด้วยราคาแพง เส้นทางที่ได้จึงเลี่ยงการทุบเท่าที่ทำได้
   const dig = search(grid, start, goal, (cell) => (cell === WALL ? 24 : 1))
   if (!dig) return
 
@@ -415,7 +387,6 @@ function ensureReachable(grid: Grid, start: Point, goal: Point): void {
   }
 }
 
-/** โปรยโคลนลงบนพื้นที่เดินได้ — เดินผ่านได้แต่ต้นทุนแพงกว่าปกติ */
 function scatterMud(grid: Grid, ratio: number, rng: () => number, keep: Point[]): void {
   if (ratio <= 0) return
 
@@ -485,23 +456,17 @@ export function createMaze(options: Partial<MazeOptions> = {}): Maze {
   return { width, height, grid, start, goal, kind: config.kind, seed: config.seed }
 }
 
-// ---------- ตรวจเส้นทางที่ผู้เล่นส่งกลับมา ----------
-
 export interface PathReport {
   ok: boolean
   message: string
-  /** จำนวนก้าวที่เดินจริง */
+
   steps: number
-  /** ต้นทุนรวม (โคลนแพงกว่าพื้นปกติ) */
+
   cost: number
-  /** เส้นทางเต็มตั้งแต่จุดเริ่ม — ถ้าผิดกติกาจะได้เท่าที่เดินถูก */
+
   cells: Point[]
 }
 
-/**
- * ตรวจว่าเส้นทางเดินได้จริงไหม: ต้องเริ่มที่จุดเริ่ม ก้าวทีละช่องในแนวตั้ง/แนวนอน
- * ห้ามทะลุกำแพง และต้องจบที่เป้าหมาย
- */
 export function validatePath(maze: Maze, path: Point[]): PathReport {
   const cells: Point[] = [maze.start]
   const limit = maze.width * maze.height * 4

@@ -6,7 +6,6 @@ const props = defineProps<{ entries: LogEntry[] }>()
 
 const list = ref<HTMLElement | null>(null)
 
-// เลื่อนตามตาล่าสุดเสมอ
 watch(
   () => props.entries.length,
   async () => {

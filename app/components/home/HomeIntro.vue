@@ -1,11 +1,8 @@
 <script setup lang="ts">
+import { GAMES } from '~/data/games'
 import { normalize } from '~/game/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
 
-/**
- * ส่วนหัวหน้าแรก — โชว์บล็อกจริงจากเกม ไม่ใช่ภาพประกอบ
- * ใช้ตัวอย่าง "เลาะกำแพงขวา" เพราะสั้นพอจะอ่านจบในสายตาเดียว แต่เป็นโปรแกรมที่เดินจบจริง
- */
 const preset = MAZE_PACK.presets.find((item) => item.id === 'wall') ?? MAZE_PACK.presets[0]!
 const program = normalize(preset.build(), MAZE_PACK)
 </script>
@@ -33,7 +30,7 @@ const program = normalize(preset.build(), MAZE_PACK)
           <dl class="mt-10 flex flex-wrap gap-x-10 gap-y-4 border-t border-line pt-6">
             <div>
               <dt class="text-xs text-ink-subtle">เกมที่เล่นได้</dt>
-              <dd class="mt-0.5 text-lg font-semibold tabular-nums text-ink">2</dd>
+              <dd class="mt-0.5 text-lg font-semibold tabular-nums text-ink">{{ GAMES.length }}</dd>
             </div>
             <div>
               <dt class="text-xs text-ink-subtle">บล็อกในเขาวงกต</dt>
@@ -48,7 +45,6 @@ const program = normalize(preset.build(), MAZE_PACK)
           </dl>
         </div>
 
-        <!-- บล็อกชุดนี้คือของจริงที่หยิบมาจากเกม ไม่ได้วาดขึ้นใหม่ -->
         <div class="relative">
           <div
             class="pointer-events-none absolute -inset-3 rounded-[1.6rem] bg-primary-100/50"

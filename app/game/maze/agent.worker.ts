@@ -1,4 +1,3 @@
-/// <reference lib="webworker" />
 import { AGENT_GLOBALS, MazeAgent, type MazeState, type PathResult, type StepResult } from './agent'
 import { findDirection, type Point } from './engine'
 import { instrument } from '../shared/instrument'
@@ -7,25 +6,16 @@ import type { AgentMode, ExploredCell, WorkerRequest, WorkerResponse } from './p
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
 
-// console.log ในโค้ดของผู้เล่นให้มาโผล่ที่แผงคอนโซลของเกมด้วย
 captureConsole(ctx as unknown as { console: Console }, () => currentLine)
 
-/** ระยะห่างขั้นต่ำระหว่างการรายงานเมธอดที่กำลังรัน (ms) */
 const TRACE_INTERVAL = 40
 
-/** กันไม่ให้ลิสต์ช่องที่สำรวจใหญ่จนส่งข้ามเธรดไม่ไหว */
 const EXPLORED_LIMIT = 200_000
 
-/** ชื่อฟังก์ชันที่แทรกไว้หน้าทุกคำสั่งของผู้เล่น — ตั้งให้แปลกพอจะไม่ชนกับตัวแปรของใคร */
 const LINE_MARKER = '__mazeLine'
 
-/** ตรวจนาฬิกาทุกกี่คำสั่ง — ไม่ต้องเรียก Date.now() ทุกบรรทัด */
 const CLOCK_EVERY = 2048
 
-/**
- * จำนวนจุดสูงสุดของ "ไทม์ไลน์บรรทัด" ที่ส่งกลับไปเล่นย้อนบนหน้าจอ
- * เกินแล้วจะทิ้งจุดเว้นจุด แล้วบันทึกห่างขึ้นเท่าตัว — ยาวแค่ไหนก็ยังเห็นภาพรวมทั้งรอบ
- */
 const TIMELINE_LIMIT = 30_000
 
 let agent: MazeAgent | null = null
@@ -33,15 +23,10 @@ let mode: AgentMode = 'plan'
 let traced = false
 let explored: ExploredCell[] = []
 
-/** บรรทัดของโค้ดผู้เล่นที่กำลังรัน และจำนวนครั้งที่รันแต่ละบรรทัด */
 let currentLine = 0
 let lineCounts: Record<number, number> = {}
 let marks = 0
 
-/**
- * ลำดับบรรทัดที่รันไปตลอดรอบ เก็บเป็นคู่ [บรรทัด, จำนวนช่องที่สำรวจไปแล้ว ณ ตอนนั้น]
- * หน้าจอเอาไปเล่นย้อน ให้ไฮไลต์ในโค้ดเดินไปพร้อมกับสีที่ไล่บนแผนที่
- */
 let timeline: number[] = []
 let stride = 1
 let sinceSample = 0
@@ -90,10 +75,6 @@ function enterMethod(method: string) {
   sendTick(method)
 }
 
-/**
- * ตัวนับบรรทัด — ถูกเรียกหน้าทุกคำสั่งของผู้เล่น จึงต้องเบาที่สุด
- * ระหว่างลูปยาว ๆ ที่ไม่ได้เรียกเมธอดช่วยเลย ตัวนี้เป็นคนรายงานความคืบหน้าแทน
- */
 function markLine(line: number) {
   currentLine = line
   lineCounts[line] = (lineCounts[line] ?? 0) + 1
@@ -107,7 +88,6 @@ function markLine(line: number) {
   if (++marks % CLOCK_EVERY === 0) sendTick(trace?.stack[trace.stack.length - 1] ?? 'solve')
 }
 
-/** ทิ้งจุดเว้นจุดแล้วบันทึกห่างขึ้นเท่าตัว ไทม์ไลน์จึงยังครอบคลุมทั้งรอบเสมอ */
 function thinTimeline() {
   const thinned: number[] = []
   for (let index = 0; index < timeline.length; index += 4) {
@@ -122,10 +102,6 @@ function exitMethod() {
   trace?.stack.pop()
 }
 
-/**
- * ห่อทุกเมธอดของ agent ไว้ด้วยตัวนับ เพื่อให้หน้าจอเห็นว่ากำลังรันเมธอดไหน
- * เขียนทับเป็น own property ของอินสแตนซ์ การเรียกซ้ำผ่าน this.xxx() จึงถูกนับด้วย
- */
 function watch(instance: MazeAgent): MazeAgent {
   const names = new Set<string>()
 
@@ -166,13 +142,8 @@ function watch(instance: MazeAgent): MazeAgent {
   return instance
 }
 
-/**
- * คอมไพล์โค้ดของผู้เล่น
- * โค้ดถูกรันในสโคปปิดที่มองเห็นแค่ MazeAgent กับค่าคงที่ของแผนที่
- * และต้องประกาศคลาสชื่อ Agent เอาไว้
- */
 function build(code: string): { instance: MazeAgent; mode: AgentMode; traced: boolean } {
-  // แทรกตัวนับบรรทัดก่อน ถ้าโค้ดมี syntax error จะได้โค้ดเดิมกลับมาและปล่อยให้ new Function เป็นคนฟ้อง
+
   const marked = instrument(code, LINE_MARKER)
 
   const factory = new Function(
@@ -217,7 +188,6 @@ return Agent;`
     throw new Error('Agent ยังไม่ได้ override เมธอด solve(state) หรือ step(state)')
   }
 
-  // ต่อสาย visit() ให้บันทึกลำดับการสำรวจไว้ส่งกลับไปวาดบนแผนที่
   Object.defineProperty(instance, 'visit', {
     configurable: true,
     writable: true,
@@ -236,7 +206,6 @@ return Agent;`
   return { instance: watch(instance), mode: plans ? 'plan' : 'step', traced: marked.ok && marked.lines.length > 0 }
 }
 
-/** แปลงค่าที่ agent คืนมาให้เป็นช่องบนแผนที่ — รับได้ทั้ง {row,col}, [row,col] และชื่อทิศ */
 function toPoint(raw: unknown, from: Point): Point | null {
   if (raw === null || raw === undefined) return null
 
@@ -256,7 +225,6 @@ function toPoint(raw: unknown, from: Point): Point | null {
   return { row: row as number, col: col as number }
 }
 
-/** แปลงเส้นทางทั้งเส้น — ทิศทางถูกต่อกันทีละก้าวจากช่องเริ่มต้น */
 function toPath(raw: PathResult, start: Point): Point[] {
   if (raw === null || raw === undefined) return []
 

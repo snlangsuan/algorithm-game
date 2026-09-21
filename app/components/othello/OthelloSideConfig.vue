@@ -6,14 +6,14 @@ import type { BlockPack, BlockProgram } from '~/game/blocks/pack'
 const props = defineProps<{
   player: Player
   config: SideConfig
-  /** ชื่อโปรแกรมที่ฝั่งนี้ใช้อยู่ */
+
   name: string
-  /** บล็อกของฝั่งนี้ ใช้เลือกอัลกอริทึมตรงนี้เลย */
+
   pack: BlockPack
   program: BlockProgram
   presetId: string
   locked?: boolean
-  /** โปรแกรมของฝั่งนี้จำอะไรข้ามเกมได้ไหม — จำเป็นต้องฝึกถึงจะเก่งขึ้น */
+
   learns?: boolean
   training?: boolean
   memory?: MemoryInfo | null
@@ -48,7 +48,12 @@ const kinds: Array<{ value: SideKind; label: string }> = [
       />
 
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold text-ink">{{ isBlack ? 'ดำ' : 'ขาว' }}</p>
+        <p class="flex items-center gap-1.5 text-sm font-semibold text-ink">
+          {{ isBlack ? 'ดำ' : 'ขาว' }}
+          <UiInfo v-if="config.kind === 'human'" label="ฝั่งนี้เล่นยังไง" align="left">
+            คลิกบนกระดานเพื่อลงหมากในตาของฝั่งนี้
+          </UiInfo>
+        </p>
         <p class="text-[11px] text-ink-subtle">{{ isBlack ? 'เดินก่อน' : 'เดินทีหลัง' }}</p>
       </div>
 
@@ -82,7 +87,6 @@ const kinds: Array<{ value: SideKind; label: string }> = [
         @preset="emit('update:preset', $event)"
       />
 
-      <!-- ฝึกได้เฉพาะฝั่งที่โปรแกรมจำข้ามเกมได้ ฝั่งที่ไม่จำ ฝึกไปก็เหมือนเดิม -->
       <UiButton
         v-if="learns"
         variant="outline"
@@ -116,7 +120,5 @@ const kinds: Array<{ value: SideKind; label: string }> = [
         </button>
       </div>
     </div>
-
-    <p v-else class="mt-2.5 text-[11px] text-ink-subtle">คลิกบนกระดานเพื่อลงหมากในตาของฝั่งนี้</p>
   </div>
 </template>

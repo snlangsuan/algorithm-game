@@ -18,9 +18,9 @@ const props = defineProps<{
     error: string | null
   }
   ready: boolean
-  /** สีหมากที่กดฝึกมา — ฝึกทีละฝั่ง คู่ซ้อมจะได้นิ่ง วัดผลได้ */
+
   side?: Player | null
-  /** ฝั่งไหนมีโปรแกรมที่จำอะไรข้ามเกมได้บ้าง */
+
   learners: Record<Player, boolean>
   names: Record<Player, string>
   memories: Record<Player, MemoryInfo | null>
@@ -32,7 +32,6 @@ const options = [10, 25, 50]
 const games = ref(25)
 const focus = ref<Focus>('both')
 
-/** ฝั่งที่ฝึกแล้วได้ผลจริง — เลือกให้อัตโนมัติถ้ามีฝั่งเดียว */
 const learners = computed(() =>
   ([BLACK, WHITE] as Player[]).filter((player) => props.learners[player])
 )
@@ -42,7 +41,6 @@ watch(
   () => {
     if (!open.value) return
 
-    // กดฝึกมาจากสีไหนก็ฝึกสีนั้น (ฝึกพร้อมกันคู่ซ้อมจะขยับตลอด วัดผลยาก)
     focus.value = props.side ?? learners.value[0] ?? 'both'
   },
   { immediate: true }
@@ -66,6 +64,32 @@ const percent = computed(() =>
 const action = computed(() => (focus.value === 'both' ? 'เริ่มประลอง' : 'เริ่มฝึก'))
 
 const size = (memory: MemoryInfo | null) => (memory ? `${(memory.bytes / 1024).toFixed(1)} KB` : '')
+
+/**
+ * ซ้อมแล้วได้อะไรกลับไปบ้าง — ดูจากสัดส่วนที่ฝั่งที่ฝึกชนะ
+ *
+ * ชนะเกือบทุกเกมหรือแพ้เกือบทุกเกม แปลว่าคู่ซ้อมไม่เหมาะ ไม่ใช่โปรแกรมไม่ดี
+ * เพราะตัววัดของ GA คือคะแนนปลายเกม ถ้าผลออกมาเหมือนกันหมดทุกเกม มันก็ไม่รู้ว่าอะไรดีกว่าอะไร
+ */
+const sparring = computed(() => {
+  const done = props.training.done
+  const side = props.training.focus
+
+  if (props.training.running || done < 10 || side === 'both') return null
+
+  const wins = side === BLACK ? props.training.blackWins : props.training.whiteWins
+  const rate = Math.round((wins / done) * 100)
+
+  if (rate <= 10) {
+    return `ซ้อม ${done} เกมแล้วชนะแค่ ${rate}% — คู่ซ้อมแข็งเกินไป แพ้หมดทุกเกมเหมือนกันจนบอทไม่รู้ว่าชุดน้ำหนักไหนดีกว่ากัน ลองสลับคู่ซ้อมเป็นตัวที่อ่อนกว่าก่อน ฝึกจนเก่งแล้วค่อยกลับมาวัดกับตัวนี้`
+  }
+
+  if (rate >= 90) {
+    return `ซ้อม ${done} เกมแล้วชนะ ${rate}% — คู่ซ้อมอ่อนไปแล้ว ชนะหมดทุกเกมก็ไม่มีอะไรให้เรียนต่อ ลองสลับเป็นคู่ที่แข็งขึ้นอีกขั้น`
+  }
+
+  return null
+})
 </script>
 
 <template>
@@ -180,7 +204,13 @@ const size = (memory: MemoryInfo | null) => (memory ? `${(memory.bytes / 1024).t
         </div>
       </div>
 
-      <!-- ความจำที่แต่ละฝั่งสะสมไว้ -->
+      <p
+        v-if="sparring"
+        class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800"
+      >
+        {{ sparring }}
+      </p>
+
       <div v-if="memories[BLACK] || memories[WHITE]" class="space-y-1.5">
         <p class="text-xs font-medium text-ink-muted">ความจำที่สะสมไว้</p>
 
@@ -226,9 +256,9 @@ const size = (memory: MemoryInfo | null) => (memory ? `${(memory.bytes / 1024).t
 
     <template #footer>
       <div class="flex items-center justify-between gap-3">
-        <p class="text-[11px] leading-relaxed text-ink-subtle">
-          ระหว่างฝึกจะคิดตาละ 40 ms<br />ฝึกซ้ำได้เรื่อย ๆ ความจำสะสมต่อจากของเดิม
-        </p>
+        <UiInfo label="การฝึกทำงานยังไง" align="left">
+          ระหว่างฝึกจะคิดตาละ 40 ms · ฝึกซ้ำได้เรื่อย ๆ ความจำสะสมต่อจากของเดิม
+        </UiInfo>
 
         <UiButton v-if="training.running" size="sm" variant="secondary" @click="emit('stop')">
           หยุด

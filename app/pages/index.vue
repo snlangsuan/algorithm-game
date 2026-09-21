@@ -2,7 +2,7 @@
 useSeoMeta({
   title: 'Algorithm Game — ต่อบล็อกให้บอทเล่นเกมเอง',
   description:
-    'ลากบล็อกมาต่อกันเป็นวิธีคิดของบอท แล้วกดรันดูว่ามันทำตามที่สั่งไหม มีเขาวงกตกับ Othello ให้ลอง'
+    'ลากบล็อกมาต่อกันเป็นวิธีคิดของบอท แล้วกดรันดูว่ามันทำตามที่สั่งไหม มีเขาวงกต Othello และหอคอยฮานอยให้ลอง'
 })
 </script>
 
@@ -14,7 +14,7 @@ useSeoMeta({
       <UiContainer>
         <div class="flex flex-wrap items-end justify-between gap-4">
           <h2 class="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">เลือกเกมที่จะลอง</h2>
-          <p class="text-sm text-ink-subtle">ทั้งสองเกมใช้บล็อกชุดเดียวกัน ต่างกันที่คำศัพท์ของเกม</p>
+          <p class="text-sm text-ink-subtle">ทุกเกมใช้บล็อกชุดเดียวกัน ต่างกันที่คำศัพท์ของเกม</p>
         </div>
 
         <GameChooser class="mt-8" />

@@ -2,7 +2,7 @@ export interface AgentTemplate {
   id: string
   name: string
   description: string
-  /** 'plan' = คิดทั้งเส้นทางทีเดียว, 'step' = เดินทีละก้าว */
+
   mode: 'plan' | 'step'
   code: string
 }

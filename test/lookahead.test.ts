@@ -1,13 +1,3 @@
-/**
- * ตัวอย่าง "คิดแทนคู่แข่ง" ต้องเล่นแข็งกว่าตัวอย่างที่มองตาเดียวจริง ไม่ใช่แค่ต่อบล็อกได้
- *
- * ตรรกะมากสุด/น้อยสุด กับกฎเลือกกิ่งของ MCTS อยู่ในบล็อกทั้งหมด
- * เอนจินทำแค่สิ่งที่บล็อกทำเองไม่ได้ — เรียกบล็อกชุดเดิมซ้ำอีกชั้น (think()) และเก็บต้นไม้สถิติ (search())
- * เทสต์นี้กันสามอย่าง: มันคิดล่วงหน้าจริง, ไม่ทำ this.here กับ this.vars เพี้ยน, และไม่คิดนานเกินเพดาน worker
- *
- * ที่นี่เล่นแบบไม่สุ่มเปิดเกม จึงได้ผลเดิมทุกครั้งและเร็วพอจะอยู่ในชุดเทสต์ปกติ
- * ส่วนตัวเลข "ชนะ 32 จาก 40 เกม" ในหน้าความรู้ วัดจากการสุ่มเปิดเกม 6 ตาแรกแล้วเล่น 40 เกม
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -43,7 +33,6 @@ function build(presetId: string): OthelloAgent {
   return new Agent() as OthelloAgent
 }
 
-/** เล่นหนึ่งเกมจนจบ คืนจำนวนหมากของแต่ละฝ่าย */
 function play(black: OthelloAgent, white: OthelloAgent) {
   const players: Record<Player, OthelloAgent> = { [BLACK]: black, [WHITE]: white }
   for (const side of [BLACK, WHITE] as Player[]) players[side].onGameStart(side)
@@ -136,7 +125,6 @@ test('ตัวแปรของแต่ละชั้นแยกกัน �
     timeBudget: 1000
   })
 
-  // บล็อกข้างในตั้งค่า ก กับ ข ตลอด ถ้าไม่ได้แยกสำเนาไว้ ค่า 42 จะหายไป
   assert.equal(
     (agent as unknown as { vars: Record<string, number> }).vars.a,
     42,
@@ -144,10 +132,6 @@ test('ตัวแปรของแต่ละชั้นแยกกัน �
   )
 })
 
-/**
- * MCTS มีการสุ่มอยู่ในตัว ผลจึงสั่น — ล็อก Math.random ไว้ให้ได้ผลเดิมทุกครั้ง
- * ถ้าไม่ล็อก เทสต์จะตกเป็นครั้งคราวโดยที่โค้ดไม่ได้พัง
- */
 function withSeededRandom<T>(seed: number, run: () => T): T {
   const real = Math.random
   let state = seed
@@ -205,7 +189,6 @@ test('ความลึกถูกจำกัดไว้ ไม่ให้�
   const agent: OthelloAgent = new Agent()
   agent.onGameStart(BLACK)
 
-  // ต้องวัดจากกระดานกลางเกมที่มีตาให้เลือกเยอะ กระดานเปิดเกมมีแค่ 4 ตา เร็วจนไม่เจอปัญหา
   let board = createBoard()
   let side: Player = BLACK
   for (let ply = 0; ply < 20; ply++) {

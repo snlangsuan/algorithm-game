@@ -1,8 +1,14 @@
-/**
- * Nuxt เติม ref/reactive/computed ให้เองตอนรันในแอป แต่ตอน bundle เทสต์ไม่มีใครเติมให้
- * จึงต้อง inject ชุดนี้เข้าไปแทน (ดู --inject ใน run.mjs)
- */
 export { computed, reactive, readonly, ref, watch, watchEffect, shallowRef, toRaw, nextTick } from 'vue'
 
-/** ของ Nuxt ที่โค้ดในโปรเจกต์ใช้ — เทสต์รันนอกเบราว์เซอร์ จึงถือว่าไม่ใช่ฝั่ง client */
+/** auto-import ของ Nuxt — เทสต์ bundle เอง จึงต้องต่อสายให้เอง */
+export { useBlockProgram } from '~/composables/useBlockProgram'
+
+/**
+ * วงจรชีวิตของคอมโพเนนต์ — เทสต์เรียก composable ตรง ๆ ไม่ได้อยู่ในคอมโพเนนต์
+ * ของจริงใช้ผูก/ถอด event ของหน้าต่าง ซึ่งไม่มีใน node อยู่แล้ว จึงปล่อยว่างไว้
+ */
+export const onMounted = (_fn: () => void): void => {}
+export const onBeforeUnmount = (_fn: () => void): void => {}
+export const onScopeDispose = (_fn: () => void): void => {}
+
 export const useState = undefined as never

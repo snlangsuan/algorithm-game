@@ -1,11 +1,3 @@
-/**
- * ภาพประกอบของหน้าความรู้ — คำนวณสดจากเอนจินจริงทุกภาพ ไม่ใช่รูปที่แคปมาแปะ
- *
- * เหตุผลที่ไม่เก็บเป็นไฟล์ภาพ: พอแผนที่เริ่มต้น สี หรือกติกาเปลี่ยน รูปที่แคปไว้จะโกหกทันที
- * โดยไม่มีอะไรฟ้อง ที่นี่ใช้ createMaze/solve ตัวเดียวกับที่เกมใช้ และมีเทสต์ล็อกตัวเลขในคำบรรยายไว้
- *
- * ทุกภาพต้องเดิมทุกครั้งที่เปิด — ห้ามใช้ Math.random ที่ไหนเลย ใช้ createRng(seed) เท่านั้น
- */
 import {
   COST_FLOOR,
   COST_MUD,
@@ -27,6 +19,49 @@ import {
   type Point
 } from '~/game/maze/engine'
 import {
+  applyMove as applyDisk,
+  createHanoi,
+  optimalMoves,
+  pegName,
+  solveMoves,
+  type Hanoi,
+  type Move as DiskMove,
+  type Towers
+} from '~/game/hanoi/engine'
+import {
+  advanceHero,
+  aheadOf as chaseAhead,
+  aim as chaseAim,
+  createMatch,
+  distanceField as chaseField,
+  dueHunters,
+  exitOpen as chaseExitOpen,
+  findArena as findChaseArena,
+  moveHunter,
+  neighbors as chaseNeighbors,
+  pathLength as chaseLength,
+  pathTo as chasePath,
+  stepAlong as chaseStep,
+  stepHero,
+  type Direction as ChaseDirection,
+  type Hunter,
+  type Match as ChaseMatch
+} from '~/game/chase/engine'
+import {
+  DECIDE_EVERY,
+  advance as advanceRunner,
+  createRun as createRunnerRun,
+  metersOf,
+  order as orderRunner,
+  speedOf as runnerSpeed,
+  type Action as RunnerAction,
+  type Run as RunnerRun
+} from '~/game/dino/engine'
+import { viewOf as runnerView } from '~/game/dino/agent'
+import { DUCK_CLEAR } from '~/game/dino/art'
+import { SEE_THRESHOLD, averageOffset, secondsOf, type Run as LineRun } from '~/game/line/engine'
+import { playRule } from '~/game/line/rules'
+import {
   BLACK,
   BOARD_SIZE,
   WHITE,
@@ -42,11 +77,11 @@ import {
 export interface MazeFigure {
   kind: 'maze'
   maze: Maze
-  /** ช่องที่ถูกเปิดดู เรียงตามลำดับ — ใช้ไล่เฉดสีให้เห็นว่าอันไหนมาก่อน */
+
   explored: Point[]
-  /** เส้นทางที่เดินจริง */
+
   path: Point[]
-  /** เฉลยของแผนที่ วาดเป็นเส้นประ */
+
   optimal: Point[]
   caption: string
 }
@@ -59,11 +94,83 @@ export interface OthelloFigure {
   caption: string
 }
 
-export type Figure = MazeFigure | OthelloFigure
+export interface HanoiFigure {
+  kind: 'hanoi'
+  puzzle: Hanoi
 
-// ---------- เขาวงกต ----------
+  towers: Towers
 
-/** แผนที่เดียวกับที่ผู้เล่นเจอตอนเปิดเกมครั้งแรก (seed 1) — ภาพกับเกมจึงตรงกันจริง */
+  last: DiskMove | null
+  caption: string
+}
+
+export interface ChaseFigure {
+  kind: 'chase'
+  match: ChaseMatch
+
+  /** ช่องที่ผู้ไล่ล่าวางแผนจะเดินผ่าน — สนามระบายสีม่วงจาง ๆ ให้ */
+  looked: Point[]
+
+  /** ช่องที่ฝ่ายหนีชั่งใจอยู่ — สนามระบายสีเขียวจาง ๆ ให้ */
+  runnerLooked?: Point[]
+  caption: string
+}
+
+export interface RunnerFigure {
+  kind: 'runner'
+  run: RunnerRun
+  /** ลำดับของสิ่งกีดขวางที่โปรแกรมกำลังจ้องอยู่ */
+  watched: number[]
+  caption: string
+}
+
+export interface LineFigure {
+  kind: 'line'
+  /** รอบที่วิ่งจบแล้ว — สนามวาดรอยที่วิ่งจริงทั้งรอบ */
+  run: LineRun
+  /** เซนเซอร์ที่กฎใช้ตัดสินใจ — วงให้เห็นบนตัวหุ่น */
+  watched: number[]
+  caption: string
+}
+
+export type Figure = MazeFigure | OthelloFigure | HanoiFigure | ChaseFigure | RunnerFigure | LineFigure
+
+/** ทศนิยมหนึ่งตำแหน่ง — ระยะห่างจากเส้นในคำบรรยาย */
+const pixels = (value: number): string => value.toFixed(1)
+
+/**
+ * กองของหอคอยฮานอยหลังเดินตามเฉลยไปกี่ตา — คำนวณสดจากเอนจินจริงเหมือนภาพอื่น
+ * คืนแผนทั้งชุดมาด้วย คำบรรยายจะได้อ้างตัวเลขจากของจริง ไม่ใช่พิมพ์ทิ้งไว้
+ */
+function hanoiAfter(disks: number, steps: number) {
+  const puzzle = createHanoi({ disks })
+  const plan = solveMoves(puzzle)
+
+  let towers = puzzle.towers
+  let last: DiskMove | null = null
+
+  for (const move of plan.slice(0, steps)) {
+    last = move
+    towers = applyDisk(towers, move)
+  }
+
+  return { puzzle, plan, towers, last }
+}
+
+/** ตาที่เท่าไรบ้างที่จานเล็กสุดเป็นคนขยับ (นับจาก 1) */
+function smallestTurns(puzzle: Hanoi, plan: DiskMove[], take: number): number[] {
+  const turns: number[] = []
+  let towers = puzzle.towers
+
+  for (const [index, move] of plan.entries()) {
+    if (towers[move.from]![towers[move.from]!.length - 1] === 1) turns.push(index + 1)
+    towers = applyDisk(towers, move)
+    if (turns.length >= take) break
+  }
+
+  return turns
+}
+
 const demoMaze = (): Maze => createMaze()
 
 const turnTo = (facing: Direction, side: 'left' | 'right'): Direction => {
@@ -82,10 +189,6 @@ const blocked = (maze: Maze, at: Point, facing: Direction): boolean => {
   return !walkable(maze.grid, next.row, next.col)
 }
 
-/**
- * เลาะกำแพงขวา — ไล่ตามบล็อกของตัวอย่าง "เลาะกำแพงขวา" ทีละข้อ
- * ถ้าขวาว่าง: หันขวาแล้วเดิน · ถ้าหน้าว่าง: เดิน · ไม่งั้น: หันซ้าย
- */
 export function wallFollowerWalk(maze: Maze, limit = 4000): Point[] {
   const path: Point[] = [maze.start]
   let at = maze.start
@@ -107,10 +210,6 @@ export function wallFollowerWalk(maze: Maze, limit = 4000): Point[] {
   return path
 }
 
-/**
- * รอยเท้าน้อยสุด — เทียบสี่ทางแล้วเลือกที่เหยียบน้อยสุด
- * เสมอกันให้ของเดิมชนะ (หน้า > ขวา > ซ้าย > หลัง) เหมือนบล็อกที่ใช้ `<` ไม่ใช่ `<=`
- */
 export function leastVisitedWalk(maze: Maze, limit = 4000): Point[] {
   const path: Point[] = [maze.start]
   const marks = new Map<string, number>()
@@ -143,10 +242,6 @@ export function leastVisitedWalk(maze: Maze, limit = 4000): Point[] {
   return path
 }
 
-/**
- * สุ่มเดิน — เดินหน้าเรื่อย ๆ สุ่มเลี้ยวเป็นครั้งคราว ชนกำแพงก็เลี้ยว
- * limit สั้น ๆ เพราะจุดประสงค์ของภาพคือให้เห็นว่ามันเดินทับรอยตัวเอง ไม่ใช่ให้ถึงทางออก
- */
 export function randomWalk(maze: Maze, seed = 7, limit = 500): Point[] {
   const rng = createRng(seed)
   const path: Point[] = [maze.start]
@@ -168,22 +263,16 @@ export function randomWalk(maze: Maze, seed = 7, limit = 500): Point[] {
   return path
 }
 
-/** จำนวนรอบที่สุ่มเล่นต่อหนึ่งตาในภาพของ MCTS — พอให้ตัวเลขนิ่งแต่ยังเร็ว */
 const MCTS_ROUNDS = 60
 
 export type Sweep = 'dfs' | 'bfs' | 'dijkstra' | 'astar'
 
-/** ช่องที่รอคิวเปิดดู — spent/score ใช้เฉพาะสองวิธีที่เรียงตามราคา อีกสองวิธีปล่อยเป็นศูนย์ไว้ */
 interface Waiting {
   at: Point
   spent: number
   score: number
 }
 
-/**
- * หยิบช่องถัดไปจากกองที่รออยู่ — ความต่างของสี่วิธีอยู่ตรงนี้ที่เดียว
- * ค้นลึกหยิบตัวท้าย (กองซ้อน) ค้นกว้างหยิบตัวแรก (คิว) อีกสองแบบหยิบตัวที่คะแนนต่ำสุด
- */
 const takeNext = (waiting: Waiting[], how: Sweep): Waiting => {
   if (how === 'dfs') return waiting.pop()!
   if (how === 'bfs') return waiting.shift()!
@@ -195,7 +284,6 @@ const takeNext = (waiting: Waiting[], how: Sweep): Waiting => {
   return waiting.splice(pick, 1)[0]!
 }
 
-/** ค้นลึกกับค้นกว้างไม่สนราคา ช่องหนึ่งเข้าคิวครั้งเดียวจบ */
 const offerOnce = (seen: Set<string>, next: Point): Waiting | null => {
   const id = key(next.row, next.col)
   if (seen.has(id)) return null
@@ -204,10 +292,6 @@ const offerOnce = (seen: Set<string>, next: Point): Waiting | null => {
   return { at: next, spent: 0, score: 0 }
 }
 
-/**
- * Dijkstra กับ A* ยอมให้ช่องเดิมเข้าคิวซ้ำได้ ถ้ารอบนี้ไปถึงด้วยราคาที่ถูกกว่าเดิม
- * ต่างกันแค่ A* บวกระยะที่เดาไว้เข้าไปในคะแนน ตัวที่ใช้ตัดสินว่าจะหยิบอันไหนก่อน
- */
 const offerCheaper = (
   best: Map<string, number>,
   maze: Maze,
@@ -224,13 +308,6 @@ const offerCheaper = (
   return { at: next, spent: total, score: total + guess }
 }
 
-/**
- * ลำดับที่แต่ละวิธีเปิดดูช่อง — หัวใจของภาพสามใบท้าย เพราะรูปร่างของสีคือตัวบอกความต่าง
- * ค่าที่คืนคือช่องที่ถูก "หยิบออกมาสรุป" ตามลำดับ ตรงกับนิยามของ expanded ใน engine.ts
- *
- * โครงเดียวกันทั้งสี่วิธี ต่างกันแค่สองจุด: หยิบตัวไหนก่อน (takeNext)
- * กับรับเพื่อนบ้านเข้าคิวเมื่อไหร่ (offerOnce / offerCheaper)
- */
 export function sweepOrder(maze: Maze, how: Sweep): Point[] {
   const start = key(maze.start.row, maze.start.col)
   const seen = new Set<string>([start])
@@ -240,7 +317,6 @@ export function sweepOrder(maze: Maze, how: Sweep): Point[] {
   const order: Point[] = []
   const waiting: Waiting[] = [{ at: maze.start, spent: 0, score: 0 }]
 
-  // เพดาน 5000 กันภาพบวมเกินจำเป็น แผนที่เริ่มต้นมีไม่ถึงพันช่องอยู่แล้ว
   while (waiting.length > 0 && order.length <= 5000) {
     const node = takeNext(waiting, how)
 
@@ -261,11 +337,8 @@ export function sweepOrder(maze: Maze, how: Sweep): Point[] {
   return order
 }
 
-// ---------- Othello ----------
-
 type Policy = (board: Board, moves: Move[], me: Player) => Move
 
-/** มุมทั้งสี่ — ยึดแล้วไม่มีวันถูกพลิก เพราะไม่มีช่องถัดออกไปให้หนีบ */
 const CORNERS: Point[] = [
   { row: 0, col: 0 },
   { row: 0, col: BOARD_SIZE - 1 },
@@ -275,17 +348,14 @@ const CORNERS: Point[] = [
 
 const isCorner = (move: Point): boolean => CORNERS.some((corner) => same(corner, move))
 
-/** ช่องที่อยู่ติดมุม — ลงแล้วเท่ากับยื่นมุมให้คู่แข่ง */
 const nextToCorner = (move: Point): boolean =>
   CORNERS.some(
     (corner) => Math.abs(corner.row - move.row) <= 1 && Math.abs(corner.col - move.col) <= 1
   ) && !isCorner(move)
 
-/** กินเยอะสุด — ตรงกับตัวอย่าง "กินเยอะสุด" ที่ต่อด้วยบล็อกไว้ (ไล่ดูทุกตา เก็บตาที่พลิกได้มากที่สุด) */
 const greedy: Policy = (_board, moves) =>
   moves.reduce((best, move) => (move.flips.length > best.flips.length ? move : best), moves[0]!)
 
-/** ยึดมุมก่อน — มุมมาก่อน เลี่ยงช่องติดมุม ที่เหลือค่อยกินเยอะสุด */
 const corner: Policy = (board, moves, me) => {
   const take = moves.find(isCorner)
   if (take) return take
@@ -294,14 +364,9 @@ const corner: Policy = (board, moves, me) => {
   return greedy(board, safe.length > 0 ? safe : moves, me)
 }
 
-/** กินน้อยสุด — ตรงข้ามกับโลภ ใช้ในช่วงต้นเกมเพื่อไม่ให้ตัวเองเหลือตาลงน้อย */
 const fewest: Policy = (_board, moves) =>
   moves.reduce((best, move) => (move.flips.length < best.flips.length ? move : best), moves[0]!)
 
-/**
- * ต้นเกมเก็บตัว ท้ายเกมกินรวบ — ตรงกับตัวอย่าง "late" ที่ต่อด้วยบล็อกไว้
- * เส้นแบ่งช่วงคือช่องว่างเหลือ 12 ช่อง เหมือนบล็อกเป๊ะ
- */
 const PHASE_LINE = 12
 const phases: Policy = (board, moves, me) => {
   const take = moves.find(isCorner)
@@ -313,13 +378,11 @@ const phases: Policy = (board, moves, me) => {
   return fewest(board, safe.length > 0 ? safe : moves, me)
 }
 
-/** เส้นฐานสุ่ม — ต้องผูกกับ seed ไม่งั้นภาพในหน้าความรู้เปลี่ยนทุกครั้งที่เปิด */
 const randomPlay = (seed: number): Policy => {
   const rng = createRng(seed)
   return (_board, moves) => moves[Math.floor(rng() * moves.length)] ?? moves[0]!
 }
 
-/** เลือกช่องที่น้ำหนักสูงสุด — วิธีตัดสินใจของตัวอย่าง GA ส่วนน้ำหนักมาจากไหนเป็นอีกเรื่อง */
 const byWeight =
   (weights: number[]): Policy =>
   (_board, moves) =>
@@ -331,7 +394,6 @@ const byWeight =
       moves[0]!
     )
 
-/** น้ำหนักสุ่มล้วน = รุ่นที่ 0 ของ GA ก่อนเรียนรู้อะไรเลย */
 const randomWeights = (seed: number): number[] => {
   const rng = createRng(seed)
   return Array.from({ length: BOARD_SIZE * BOARD_SIZE }, () => Math.round(rng() * 100))
@@ -347,7 +409,6 @@ interface Match {
   white: number
 }
 
-/** เล่นจนจบ หรือหยุดที่ตาที่กำหนด — ไม่มีการสุ่ม ผลจึงเท่าเดิมทุกครั้ง */
 export function playMatch(black: Policy, white: Policy, stopAfter = Infinity): Match {
   let board = createBoard()
   let turn: Player = BLACK
@@ -384,10 +445,6 @@ export function playMatch(black: Policy, white: Policy, stopAfter = Infinity): M
   }
 }
 
-/**
- * สุ่มเล่นจากกระดานนี้ไปจนจบเกมหนึ่งรอบ แล้วบอกว่าฝั่ง me ชนะไหม
- * นี่คือ "การสุ่มเล่นจนจบ" ของ MCTS ตรง ๆ — ไม่มีความรู้เรื่องเกมอยู่ในนี้เลยสักบรรทัด
- */
 function playout(board: Board, turn: Player, me: Player, rng: () => number): boolean {
   let at = board
   let player = turn
@@ -411,7 +468,6 @@ function playout(board: Board, turn: Player, me: Player, rng: () => number): boo
   return mine > (tally.black + tally.white) - mine
 }
 
-/** อัตราชนะของแต่ละตา เมื่อวัดด้วยการสุ่มเล่นจนจบอย่างเดียว */
 function playoutRates(board: Board, player: Player, rounds: number, seed: number) {
   const rng = createRng(seed)
   const other = player === BLACK ? WHITE : BLACK
@@ -428,15 +484,243 @@ function playoutRates(board: Board, player: Player, rounds: number, seed: number
     .sort((a, b) => b.rate - a.rate)
 }
 
-// ---------- ประกอบเป็นภาพของแต่ละหัวข้อ ----------
-
 const cornersOwnedBy = (board: Board, player: Player): number =>
   CORNERS.filter((at) => board[at.row]![at.col] === player).length
 
+/** ผู้ไล่ล่าตัวหนึ่งเล็งไปที่ไหน — คืนช่องเป้าหมาย */
+type ChaseAim = (match: ChaseMatch, hunter: Hunter) => Point
+
 /**
- * สร้างภาพทั้งหมดครั้งเดียวแล้วเก็บไว้ — หน้าเปลี่ยนหัวข้อไม่ต้องคำนวณใหม่
- * คำบรรยายประกอบจากตัวเลขที่คำนวณได้จริง ไม่ฮาร์ดโค้ด จะได้ไม่มีวันขัดกับภาพ
+ * เดินหนึ่งฉากของเกมไล่จับตามบทที่เขียนไว้ ไม่มีการสุ่มเลย
+ * ผู้ไล่ล่าใช้ทางที่สั้นที่สุดเหมือนบล็อกในเกมจริง ต่างกันแค่ว่าเล็งไปที่ไหน
  */
+function chaseScene(
+  arenaId: string,
+  run: ChaseDirection[],
+  hunters: number,
+  speed: number,
+  aimOf: ChaseAim
+): { match: ChaseMatch; looked: Point[] } {
+  const match = createMatch(findChaseArena(arenaId), { hunters, hunterSpeed: speed })
+
+  for (const dir of run) {
+    chaseAim(match, dir)
+    advanceHero(match)
+
+    for (const hunter of dueHunters(match, speed)) {
+      moveHunter(match, hunter, chaseStep(match.arena.grid, hunter.at, aimOf(match, hunter)))
+    }
+  }
+
+  const looked = match.hunters.flatMap((hunter) =>
+    chasePath(match.arena.grid, hunter.at, aimOf(match, hunter))
+  )
+
+  return { match, looked }
+}
+
+/** ของชิ้นที่ตัวเอกน่าจะไปเก็บต่อ — ชิ้นที่ใกล้ตัวเขาที่สุด */
+const nextGemOf = (match: ChaseMatch): Point =>
+  match.gems.reduce(
+    (best, gem) => (manhattan(match.hero, gem) < manhattan(match.hero, best) ? gem : best),
+    match.gems[0] ?? match.arena.exit
+  )
+
+/**
+ * บทเดินของตัวเอกในภาพทั้งสองหน้า — เขียนไว้ตายตัว ภาพจะได้เหมือนเดิมทุกครั้ง
+ * ความยาวเลือกให้พอดีกับจังหวะที่ผู้ไล่ล่าสามตัวแยกย้ายกันไปคนละทางพอดี
+ */
+/**
+ * นโยบายของฝ่ายหนีสองแบบ — เขียนซ้ำจากบล็อกใน RUNNER_PACK ให้ภาพประกอบใช้
+ * แก้สูตรในบล็อกเมื่อไร ต้องแก้ตรงนี้ให้ตรงกันด้วย (มีเทสต์เทียบผลของทั้งสองทางไว้)
+ */
+
+/** ระยะจากผู้ไล่ล่าที่ใกล้ที่สุดถึงช่องใดก็ได้ */
+function threatOf(match: ChaseMatch): (cell: Point) => number {
+  const fields = match.hunters.map((hunter) => chaseField(match.arena.grid, hunter.at))
+
+  return (cell) => {
+    let near = 99
+
+    for (const field of fields) {
+      const steps = field[cell.row]![cell.col]!
+      if (steps >= 0 && steps < near) near = steps
+    }
+
+    return near
+  }
+}
+
+/** เป้าหมายตอนนี้ของฝ่ายหนี — ของที่ใกล้ที่สุด หรือประตูเมื่อเก็บครบแล้ว */
+function runnerGoal(match: ChaseMatch): Point {
+  if (chaseExitOpen(match)) return match.arena.exit
+
+  return match.gems.reduce(
+    (best, gem) => (manhattan(match.hero, gem) < manhattan(match.hero, best) ? gem : best),
+    match.gems[0] ?? match.arena.exit
+  )
+}
+
+interface RunnerChoice {
+  dir: ChaseDirection | null
+  /** ช่องที่ชั่งใจก่อนตัดสินใจ */
+  looked: Point[]
+}
+
+/** ถอยไปทางที่ผู้ไล่ล่าต้องเดินมาไกลที่สุด เสมอกันค่อยเลือกช่องที่ใกล้เป้าหมายกว่า */
+function dodgeChoice(match: ChaseMatch): RunnerChoice {
+  const risk = threatOf(match)
+  const goal = runnerGoal(match)
+  const cells = chaseNeighbors(match.arena.grid, match.hero)
+
+  let dir: ChaseDirection | null = null
+  let safest = -1
+  let closest = Infinity
+
+  for (const cell of cells) {
+    const safety = risk(cell)
+    const toGoal = chaseLength(match.arena.grid, cell, goal)
+
+    if (safety > safest || (safety === safest && toGoal < closest)) {
+      safest = safety
+      closest = toGoal
+      dir = cell.dir
+    }
+  }
+
+  return { dir, looked: cells.map((cell) => ({ row: cell.row, col: cell.col })) }
+}
+
+/**
+ * ตัวอย่าง "ใกล้ก็หนีก่อน" — สองชั้น ชั้นเอาตัวรอดตัดหน้าเมื่อใกล้กว่า 4 ช่อง
+ * วัดระยะแบบเดียวกับบล็อกเป๊ะ ๆ คือเล็งผู้ไล่ล่าที่ใกล้ที่สุดแบบเส้นตรงก่อน แล้วค่อยวัดระยะเดินจริงไปหาตัวนั้น
+ */
+function evadeChoice(match: ChaseMatch): RunnerChoice {
+  const closest = match.hunters.reduce((best, hunter) =>
+    manhattan(match.hero, hunter.at) < manhattan(match.hero, best.at) ? hunter : best
+  )
+
+  const gap = chaseLength(match.arena.grid, match.hero, closest.at)
+  if ((gap < 0 ? 999 : gap) <= 4) return dodgeChoice(match)
+
+  const goal = runnerGoal(match)
+
+  return {
+    dir: chaseStep(match.arena.grid, match.hero, goal),
+    looked: chasePath(match.arena.grid, match.hero, goal)
+  }
+}
+
+/** ตัวอย่าง "ชั่งน้ำหนักทุกก้าว" — แรงดึงของเป้าหมาย ลบแรงผลักที่ออกฤทธิ์ในระยะ 3 ช่อง */
+function fieldChoice(match: ChaseMatch): RunnerChoice {
+  const risk = threatOf(match)
+  const goal = runnerGoal(match)
+  const cells = chaseNeighbors(match.arena.grid, match.hero)
+
+  let dir: ChaseDirection | null = null
+  let best = -Infinity
+
+  for (const cell of cells) {
+    const danger = Math.max(0, 3 - risk(cell))
+    const toGoal = chaseLength(match.arena.grid, cell, goal)
+    const score = -(toGoal < 0 ? 99 : toGoal) - danger * 2
+
+    if (score > best) {
+      best = score
+      dir = cell.dir
+    }
+  }
+
+  return { dir, looked: cells.map((cell) => ({ row: cell.row, col: cell.col })) }
+}
+
+/** ตัวอย่าง "ไล่ตามทางที่สั้นที่สุด" ของฝ่ายไล่ — ใกล้ก็ตามตัว ไกลก็ไปดักที่ของ */
+function pursuitAim(match: ChaseMatch, hunter: Hunter): Point {
+  if (chaseLength(match.arena.grid, hunter.at, match.hero) <= 12) return match.hero
+
+  return match.gems.reduce(
+    (best, gem) => (manhattan(match.hero, gem) < manhattan(match.hero, best) ? gem : best),
+    match.gems[0] ?? match.arena.exit
+  )
+}
+
+/**
+ * ปล่อยให้ AI ทั้งสองฝ่ายเดินสู้กันตามจำนวนจังหวะที่กำหนด
+ * ไม่มีการสุ่มเลย ภาพจึงเหมือนเดิมทุกครั้งที่เปิดหน้า
+ */
+function chaseDuel(
+  arenaId: string,
+  hunters: number,
+  speed: number,
+  ticks: number,
+  choose: (match: ChaseMatch) => RunnerChoice
+): { match: ChaseMatch; looked: Point[]; runnerLooked: Point[] } {
+  const match = createMatch(findChaseArena(arenaId), { hunters, hunterSpeed: speed })
+  let runnerLooked: Point[] = []
+
+  for (let tick = 1; tick <= ticks; tick++) {
+    match.tick = tick
+
+    const choice = choose(match)
+    runnerLooked = choice.looked
+    stepHero(match, choice.dir)
+
+    if (match.over) break
+
+    for (const hunter of dueHunters(match, speed)) {
+      moveHunter(match, hunter, chaseStep(match.arena.grid, hunter.at, pursuitAim(match, hunter)))
+    }
+  }
+
+  const looked = match.hunters.flatMap((hunter) =>
+    chasePath(match.arena.grid, hunter.at, pursuitAim(match, hunter))
+  )
+
+  return { match, looked, runnerLooked }
+}
+
+const CHASE_RUN: ChaseDirection[] = [
+  'down',
+  'down',
+  'right',
+  'right',
+  'right',
+  'right',
+  'right',
+  'right',
+  'up',
+  'up',
+  'right',
+  'right'
+]
+
+/**
+ * เล่นเกมวิ่งด้วยกฎ "หลบเมื่อเหลือเวลาไม่เกิน margin วินาที" จนถึงจังหวะที่กำลังจะสั่งหลบพอดี
+ *
+ * ใช้กฎเดียวกับตัวอย่างในเกมเป๊ะ แต่เขียนซ้ำตรงนี้ เพราะโปรแกรมของผู้เล่นรันใน Web Worker
+ * ซึ่งเรียกจากตอนสร้างภาพประกอบไม่ได้ · หยุดตอนความเร็วเกินที่กำหนด จะได้เทียบสองความเร็วกันได้
+ */
+function runnerScene(margin: number, seed: number, untilSpeed: number) {
+  const run = createRunnerRun({ courseId: 'classic', seed })
+
+  for (let step = 0; step < 20000 && !run.over; step++) {
+    const view = runnerView(run, 500)
+    const first = view.obstacles[0]
+
+    if (first && first.time <= margin && runnerSpeed(run) >= untilSpeed && first.distance > 8) {
+      return { run, first, speed: runnerSpeed(run) }
+    }
+
+    let action: RunnerAction = 'run'
+    if (first && first.time <= margin) action = first.bottom >= DUCK_CLEAR ? 'duck' : 'jump'
+
+    orderRunner(run, action)
+    for (let frame = 0; frame < DECIDE_EVERY && !run.over; frame++) advanceRunner(run)
+  }
+
+  return { run, first: runnerView(run, 500).obstacles[0] ?? null, speed: runnerSpeed(run) }
+}
+
 let cache: Record<string, Figure> | null = null
 
 export function buildFigures(): Record<string, Figure> {
@@ -451,10 +735,6 @@ export function buildFigures(): Record<string, Figure> {
   const bfs = sweepOrder(maze, 'bfs')
   const dfs = sweepOrder(maze, 'dfs')
 
-  /**
-   * สองหัวข้อท้ายใช้แผนที่แบบ "อุปสรรคสุ่ม" แทน เพราะบนเขาวงกตแท้มีทางเดียวถึงกันอยู่แล้ว
-   * ทางที่ถูกที่สุดกับทางที่ก้าวน้อยที่สุดจึงเป็นเส้นเดียวกันเสมอ ภาพจะไม่เล่าอะไรเลย
-   */
   const open = createMaze({ kind: 'obstacles', seed: 3 })
   const cheapest = solve(open)
   const fewest = solveSteps(open)
@@ -467,25 +747,144 @@ export function buildFigures(): Record<string, Figure> {
   const cheapestPath = cheapest?.path ?? []
   const fewestPath = fewest?.path ?? []
 
-  // เกมเดียวกันสองจังหวะ — กลางเกมกับตอนจบ เพื่อให้เห็นว่าการนำตอนกลางเกมไม่ได้แปลว่าชนะ
   const mid = playMatch(greedy, corner, 38)
   const end = playMatch(greedy, corner)
 
-  // กระดานกลางเกมที่ทั้งสองฝ่ายเล่นดี ไว้ให้เห็นว่าในหนึ่งตามีทางเลือกกี่ทาง
   const branching = playMatch(corner, corner, 24)
 
-  // รุ่นที่ 0 ของ GA — น้ำหนักสุ่มล้วน ยังไม่ได้เรียนรู้อะไร
   const raw = playMatch(byWeight(randomWeights(20260920)), corner)
 
-  // ต้นเกมเก็บตัว เจอ ยึดมุมก่อน — สองกฎที่ต่างกันแค่การถามว่าตอนนี้อยู่ช่วงไหนของเกม
   const staged = playMatch(phases, corner)
 
-  // หนึ่งเกมของเส้นฐานสุ่ม — ผูก seed ไว้ ไม่งั้นภาพเปลี่ยนทุกครั้งที่เปิดหน้า
   const dice = playMatch(randomPlay(20260920), corner)
 
   const rates = playoutRates(branching.board, branching.turn, MCTS_ROUNDS, 20260920)
 
+  // หอคอยฮานอย 4 ใบ — เล็กพอให้นับตาตามได้ด้วยตา แต่ยังเห็นโครงของการแตกงาน
+  const FIGURE_DISKS = 4
+  const half = optimalMoves(FIGURE_DISKS - 1)
+  const pivot = hanoiAfter(FIGURE_DISKS, half + 1)
+  const stacked = hanoiAfter(FIGURE_DISKS, half)
+  const oddTurns = smallestTurns(stacked.puzzle, stacked.plan, 4)
+
+  // ไล่จับ — ฉากแรกไล่ตามหลังล้วน ๆ ฉากที่สองแบ่งหน้าที่กันสามตัว
+  const tail = chaseScene('lattice', CHASE_RUN, 2, 0.5, (match) => match.hero)
+
+  const split = chaseScene('lattice', CHASE_RUN, 3, 0.5, (match, hunter) => {
+    if (hunter.index === 0) return match.hero
+    if (hunter.index === 1) return chaseAhead(match.arena.grid, match.hero, match.facing, 3)
+    return nextGemOf(match)
+  })
+
+  const tailGap = tail.match.hunters.map((hunter) =>
+    chaseLength(tail.match.arena.grid, hunter.at, tail.match.hero)
+  )
+
+  const splitGap = split.match.hunters.map((hunter) =>
+    chaseLength(split.match.arena.grid, hunter.at, split.match.hero)
+  )
+
+  // ฉากเดียวกันอีกครั้ง คราวนี้ไม่มีใครมีหน้าที่ประจำ — ใครใกล้กว่า 5 ช่องก็รุม ที่เหลือไปยึดของ
+  const RUSH_RANGE = 5
+  const closing = chaseScene('lattice', CHASE_RUN, 4, 0.5, (match, hunter) =>
+    chaseLength(match.arena.grid, hunter.at, match.hero) <= RUSH_RANGE ? match.hero : nextGemOf(match)
+  )
+
+  const closingGap = closing.match.hunters.map((hunter) =>
+    chaseLength(closing.match.arena.grid, hunter.at, closing.match.hero)
+  )
+
+  const rushing = closingGap.filter((gap) => gap <= RUSH_RANGE).length
+  const holding = closingGap.length - rushing
+
+  // ฝ่ายหนีเป็น AI ทั้งสองฉาก ผู้ไล่ล่าชุดเดียวกัน ต่างกันแค่วิธีคิดของคนหนี
+  // หยุดที่จังหวะที่ 11 ซึ่งทั้งสองฉากมีผู้ไล่ล่าห่างเท่ากันพอดี
+  // จะได้เทียบกันได้ตรง ๆ ว่าที่ระยะเดียวกัน สองวิธีคิดตัดสินใจต่างกันยังไง
+  const DUEL_TICKS = 11
+  const layered = chaseDuel('lattice', 2, 0.65, DUEL_TICKS, evadeChoice)
+  const potential = chaseDuel('lattice', 2, 0.65, DUEL_TICKS, fieldChoice)
+
+  const layeredGap = Math.min(
+    ...layered.match.hunters.map((hunter) =>
+      chaseLength(layered.match.arena.grid, hunter.at, layered.match.hero)
+    )
+  )
+
+  const potentialGap = Math.min(
+    ...potential.match.hunters.map((hunter) =>
+      chaseLength(potential.match.arena.grid, hunter.at, potential.match.hero)
+    )
+  )
+
+  // เกมวิ่งหลบ — ฉากเดียวกันสองจังหวะ ต่างกันที่ความเร็ว จะได้เห็นว่าระยะที่ต้องเผื่อโตตามความเร็ว
+  const MARGIN = 0.3
+  const slowScene = runnerScene(MARGIN, 4, 0)
+  const fastScene = runnerScene(MARGIN, 4, 620)
+
+  const slowSpeed = Math.round(slowScene.speed)
+  const fastSpeed = Math.round(fastScene.speed)
+  const slowGap = Math.round(slowScene.first?.distance ?? 0)
+  const fastGap = Math.round(fastScene.first?.distance ?? 0)
+
+  // ยีนกระโดดที่สุ่มได้ตอนเริ่มฝึก — เร็วเกินไปจนเป็นยีนที่การคัดเลือกต้องทิ้ง
+  const EARLY_GENE = 0.4
+  const earlyScene = runnerScene(EARLY_GENE, 4, 0)
+  const earlySpeed = Math.round(earlyScene.speed)
+  const earlyGap = Math.round(earlyScene.first?.distance ?? 0)
+
+  // หุ่นเดินตามเส้น — ทุกภาพคือรอยที่วิ่งจริงทั้งรอบ ด้วยกฎเดียวกับตัวอย่างในเกม
+  const bang = playRule('eight', 'bang-bang')
+  const bothSeen = (run: LineRun) =>
+    (run.sensors[0] ?? 0) >= SEE_THRESHOLD && (run.sensors[4] ?? 0) >= SEE_THRESHOLD
+  const fork = playRule('eight', 'bang-bang', bothSeen)
+  const proportional = playRule('sharp', 'proportional')
+  const pd = playRule('sharp', 'pd')
+  const final = playRule('final', 'switching')
+  const finalPd = playRule('final', 'pd')
+
   return {
+    'bang-bang': {
+      kind: 'line',
+      run: bang,
+      watched: [0, 4],
+      caption: `รอยม่วงคือทางที่ bang-bang วิ่งจริงบนสนามเลขแปด ห่างเส้นเฉลี่ย ${pixels(averageOffset(bang))} พิกเซล เพราะมันเลี้ยวเต็มแรงทุกครั้งที่ส่าย · ที่วินาที ${secondsOf(fork.time)} ตรงจุดตัดกลางสนาม เซนเซอร์ซ้ายสุดกับขวาสุดเห็นเส้นพร้อมกัน กฎข้อแรกคือ "ซ้ายเห็นก็หมุนซ้าย" มันจึงหมุนไปเกาะเส้นที่ตัดผ่าน แล้ววิ่งออกนอกทางของตัวเองจนหลุดที่วินาที ${secondsOf(bang.time)}`
+    },
+    'p-control': {
+      kind: 'line',
+      run: proportional,
+      watched: [],
+      caption: `รอยของแบบ P บนสนามมุมหักศอก ครบรอบใน ${secondsOf(proportional.time)} วินาที ห่างเส้นเฉลี่ย ${pixels(averageOffset(proportional))} พิกเซล และมากสุด ${pixels(proportional.offsetMax)} พิกเซล · ดูตรงมุม — รอยเลยออกนอกเส้นไปก่อนแล้วค่อยวกกลับ เพราะมอเตอร์ตอบช้า และ P ไม่รู้ว่าตัวเองกำลังหมุนเข้าหาเส้นอยู่แล้ว มันจึงเลี้ยวแรงเท่าเดิมจนเลย`
+    },
+    'pid-control': {
+      kind: 'line',
+      run: pd,
+      watched: [],
+      caption: `สนามเดียวกับภาพของแบบ P แต่เป็นรอยของ PD ที่กำลัง 90 — ครบรอบใน ${secondsOf(pd.time)} วินาที (แบบ P ใช้ ${secondsOf(proportional.time)}) ห่างเส้นเฉลี่ย ${pixels(averageOffset(pd))} พิกเซล เทียบกับ ${pixels(averageOffset(proportional))} ของแบบ P · รอยตรงมุมแนบกว่าทั้งที่วิ่งเร็วกว่า เพราะส่วน D เห็นว่าเส้นกำลังวิ่งกลับเข้ากลาง แล้วผ่อนการเลี้ยวก่อนจะเลย`
+    },
+    'behavior-switching': {
+      kind: 'line',
+      run: final,
+      watched: [],
+      caption: `รอยของโปรแกรมสลับพฤติกรรมบนสนามรวมโจทย์ ครบรอบใน ${secondsOf(final.time)} วินาที · ตรงเส้นขาดสองช่วง รอยเป็นเส้นตรงพาดข้ามช่องว่าง ที่นั่นไม่มีอะไรให้เห็นเลย มันวิ่งตรงเพราะจำได้ว่าก่อนหน้านั้นเส้นอยู่นิ่ง ๆ กลางตัวมานาน · ส่วนตัวอย่าง PD บนสนามเดียวกันจบตั้งแต่วินาที ${secondsOf(finalPd.time)} เพราะเข้าโซนแดงแรกด้วยความเร็วเต็มที่`
+    },
+    'reflex-rules': {
+      kind: 'runner',
+      run: slowScene.run,
+      watched: [0],
+      caption: `จังหวะที่กฎเพิ่งสั่งหลบพอดี — ตอนนั้นลู่วิ่งอยู่ที่ ${slowSpeed} พิกเซลต่อวินาที กฎจึงเผื่อระยะไว้ ${Math.round(slowSpeed * MARGIN)} พิกเซล และของชิ้นหน้าเข้ามาอยู่ที่ ${slowGap} พิกเซลพอดี · ทั้งโปรแกรมมีกฎข้อเดียวเท่านี้ ไม่มีการจำอะไรจากจังหวะก่อน และไม่ได้วางแผนอะไรล่วงหน้า`
+    },
+    'time-to-contact': {
+      kind: 'runner',
+      run: fastScene.run,
+      watched: [0],
+      caption: `กฎเดิมเป๊ะ แต่เป็นจังหวะที่ลู่เร่งมาถึง ${fastSpeed} พิกเซลต่อวินาทีแล้ว (ระดับ ${fastScene.run.level}) — คราวนี้ระยะที่เผื่อกลายเป็น ${Math.round(fastSpeed * MARGIN)} พิกเซล และของชิ้นหน้าอยู่ห่าง ${fastGap} พิกเซล · เลขพิกเซลเปลี่ยนไปเกือบเท่าตัวเมื่อเทียบกับภาพก่อนหน้า ทั้งที่ "เวลาที่เหลือก่อนชน" ยังเป็น ${MARGIN} วินาทีเท่าเดิม นี่คือเหตุผลที่ตัวเลขในกฎควรอยู่ในหน่วยเวลา`
+    },
+    'evolved-timing': {
+      kind: 'runner',
+      run: earlyScene.run,
+      watched: [0],
+      caption: `ยีนกระโดด ${EARLY_GENE} วินาที แบบที่สุ่มได้ตอนเริ่มฝึกบ่อย ๆ — ลู่วิ่งอยู่ที่ ${earlySpeed} พิกเซลต่อวินาที มันจึงสั่งกระโดดตอนของยังห่างถึง ${earlyGap} พิกเซล ซึ่งเร็วเกินไป · ยีนแบบนี้วิ่งได้ไม่กี่ร้อยเมตรก็ชน พอเทียบระยะกับแชมป์แล้วแพ้ การคัดเลือกก็ทิ้งมันไปเอง โดยไม่มีใครต้องบอกว่าเลขนี้ผิด`
+    },
     'wall-follower': {
       kind: 'maze',
       maze,
@@ -583,6 +982,52 @@ export function buildFigures(): Record<string, Figure> {
       moves: branching.moves,
       last: branching.last,
       caption: `กระดานเดียวกับหน้า "คิดแทนคู่แข่ง" แต่วัดคนละวิธี — จากตาที่ลงได้ ${branching.moves.length} ตา สุ่มเล่นจนจบเกมตาละ ${MCTS_ROUNDS} รอบแล้วนับว่าชนะกี่ครั้ง · ตาที่ดีที่สุดชนะ ${rates[0]?.rate ?? 0}% ตาที่แย่ที่สุดชนะ ${rates[rates.length - 1]?.rate ?? 0}% · ไม่มีใครบอกมันเลยว่ามุมสำคัญ มันนับเอาจากผลล้วน ๆ · ตัวอย่างในเกมทำแบบเดียวกันนี้ 300 รอบต่อหนึ่งตา`
+    },
+    'divide-and-conquer': {
+      kind: 'hanoi',
+      puzzle: pivot.puzzle,
+      towers: pivot.towers,
+      last: pivot.last,
+      caption: `จาน ${FIGURE_DISKS} ใบใช้ ${pivot.plan.length} ตา และภาพนี้คือตาที่ ${half + 1} พอดี — ${half} ตาแรกคือย้าย ${FIGURE_DISKS - 1} ใบบนไปกองไว้ที่หมุด ${pegName(pivot.puzzle.spare)} ตานี้คือย้ายใบล่างสุดไปหมุด ${pegName(pivot.puzzle.target)} ที่ว่างโล่ง แล้วที่เหลืออีก ${half} ตาคือย้ายกองนั้นตามไปทับ · สองครึ่งที่ว่าคืองานเดียวกับทั้งก้อนเป๊ะ แค่เล็กลงหนึ่งใบ จำนวนตาจึงเป็น ${half} + 1 + ${half} = ${pivot.plan.length}`
+    },
+    'hanoi-parity': {
+      kind: 'hanoi',
+      puzzle: stacked.puzzle,
+      towers: stacked.towers,
+      last: stacked.last,
+      caption: `กองเดียวกันนี้เกิดขึ้นได้โดยไม่ต้องวางแผนอะไรเลย · ${half} ตาแรกของโจทย์ ${FIGURE_DISKS} ใบ จานเล็กสุดเป็นคนขยับในตาที่ ${oddTurns.join(', ')} คือตาคี่ทุกตาไม่มีพลาด ส่วนตาคู่ที่เหลือมีตาที่ถูกกติกาอยู่ตาเดียวเสมอจึงไม่ต้องเลือก · จาน ${FIGURE_DISKS} ใบเป็นจำนวนคู่ จานเล็กสุดจึงวนไปทางขวา ${pegName(0)}→${pegName(1)}→${pegName(2)}→${pegName(0)}`
+    },
+    pursuit: {
+      kind: 'chase',
+      match: tail.match,
+      looked: tail.looked,
+      caption: `ผู้ไล่ล่าสองตัวเล็งที่ตัวเอกเหมือนกันทั้งคู่ ช่องม่วงจางคือทางที่สั้นที่สุดที่แต่ละตัวกำลังจะเดินตาม · ตอนนี้ห่างอยู่ ${tailGap.join(' กับ ')} ช่อง และปลายทางของทั้งสองเส้นคือช่องเดียวกัน คือช่องที่ตัวเอกยืนอยู่ตอนนี้ ซึ่งอีกวินาทีเดียวเขาก็ไม่อยู่ตรงนั้นแล้ว — ไล่ตามหลังอย่างเดียวจึงได้แค่ตามติด ไม่ได้ปิดทางหนี · ตัวเอกเก็บของไปแล้ว ${tail.match.taken} จาก ${tail.match.arena.gems.length} ชิ้น`
+    },
+    ambush: {
+      kind: 'chase',
+      match: split.match,
+      looked: split.looked,
+      caption: `ฉากเดียวกัน ตัวเอกเดินทางเดิมเป๊ะทุกก้าว ต่างกันแค่ผู้ไล่ล่าเล็งคนละที่ — ตัวที่ 1 ตามหลังอยู่ ${splitGap[0]} ช่อง ตัวที่ 2 ไม่วิ่งตาม แต่ไปยืนรอที่ช่องข้างหน้าตัวเอกสามช่อง จึงมาโผล่ข้างหน้าแล้วตั้งแต่ตอนนี้ ตัวที่ 3 ไปรอที่ของชิ้นที่เขากำลังจะเก็บ · เส้นทั้งสามแยกออกจากกัน ทางที่ตัวเอกเดินได้อย่างปลอดภัยจึงแคบลงเรื่อย ๆ แทนที่จะแค่ถูกตามติด`
+    },
+    encirclement: {
+      kind: 'chase',
+      match: closing.match,
+      looked: closing.looked,
+      caption: `ฉากเดิมอีกครั้ง ตัวเอกเดินทางเดิมเป๊ะ คราวนี้ผู้ไล่ล่าสี่ตัวและไม่มีใครมีหน้าที่ประจำเลย — ตอนนี้ห่างอยู่ ${closingGap.join(' · ')} ช่อง ${rushing} ตัวที่เข้าเขต ${RUSH_RANGE} ช่องแล้วเลิกเฝ้า หันมารุมตัวเอกพร้อมกัน อีก ${holding} ตัวที่ยังไกลไปยึดของชิ้นที่เขากำลังจะเก็บไว้ก่อน · ต่างจากหัวข้อที่แล้วตรงที่บทบาทไม่ได้ถูกแบ่งไว้ล่วงหน้า ตัวไหนเข้าเขตก่อนก็กลายเป็นตัวรุมเอง ถอยห่างออกไปเมื่อไรก็กลับไปเฝ้าของใหม่ · ในเกมจริงยังมีกฎย่อยอีกข้อ คือเมื่อมีหลายทางที่สั้นเท่ากัน แต่ละตัวจะเลี่ยงไปทางที่ห่างเพื่อนที่สุด วงจึงแคบลงจากคนละด้าน ไม่ใช่ไล่ต่อแถวกันมาทางเดียว`
+    },
+    'layered-safety': {
+      kind: 'chase',
+      match: layered.match,
+      looked: layered.looked,
+      runnerLooked: layered.runnerLooked,
+      caption: `จังหวะที่ ${layered.match.tick} ของตัวอย่าง "ใกล้ก็หนีก่อน" — ผู้ไล่ล่าที่ใกล้ที่สุดห่าง ${layeredGap} ช่อง ซึ่งเข้าเงื่อนไข "ไม่เกิน 4" พอดี ชั้นเอาตัวรอดจึงตัดหน้าชั้นทำงาน ช่องเขียวจางคือช่องรอบตัวที่มันกำลังชั่งว่าถอยไปทางไหนแล้วห่างที่สุด ส่วนช่องม่วงจางคือทางที่ฝ่ายไล่วางไว้ · เก็บของไปแล้ว ${layered.match.taken} จาก ${layered.match.arena.gems.length} ชิ้น`
+    },
+    'potential-field': {
+      kind: 'chase',
+      match: potential.match,
+      looked: potential.looked,
+      runnerLooked: potential.runnerLooked,
+      caption: `จังหวะเดียวกันเป๊ะ สนามเดียวกัน ผู้ไล่ล่าชุดเดียวกัน เปลี่ยนแค่วิธีคิดของคนหนีเป็น "ชั่งน้ำหนักทุกก้าว" — ผู้ไล่ล่าที่ใกล้ที่สุดห่าง ${potentialGap} ช่องเท่ากัน แต่แรงผลักออกฤทธิ์เฉพาะในระยะ 3 ช่อง ที่ระยะนี้จึงเหลือแต่แรงดึงของเป้าหมาย มันเลยเดินหน้าเก็บของต่อแทนที่จะถอย · เก็บไปแล้ว ${potential.match.taken} จาก ${potential.match.arena.gems.length} ชิ้น มากกว่าอีกฉากหนึ่งชิ้นทั้งที่เดินมาเท่ากัน`
     },
     minimax: {
       kind: 'othello',

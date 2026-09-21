@@ -3,15 +3,10 @@ import { generate } from '~/game/blocks/codegen'
 import { normalize } from '~/game/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
 
-/**
- * กติกาข้อเดียวที่ทำให้ทั้งระบบเข้าใจง่าย — หนึ่งบล็อกได้โค้ดหนึ่งบรรทัดเสมอ
- * โค้ดที่โชว์ตรงนี้ไม่ได้พิมพ์ทิ้งไว้ แต่ให้ระบบแปลงจากบล็อกชุดเดียวกันตอนเปิดหน้า
- */
 const preset = MAZE_PACK.presets.find((item) => item.id === 'starter') ?? MAZE_PACK.presets[0]!
 const program = normalize(preset.build(), MAZE_PACK)
 const built = generate(program, MAZE_PACK)
 
-/** ตัดเอาเฉพาะช่วงที่มาจากบล็อก ไม่ต้องโชว์โครงคลาสที่ระบบเติมให้ */
 const lines = computed(() => {
   const numbers = Object.values(built.lineOf)
   if (numbers.length === 0) return []

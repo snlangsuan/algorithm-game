@@ -1,4 +1,3 @@
-/// <reference lib="webworker" />
 import { AGENT_GLOBALS, OthelloAgent, type AgentMemory, type AgentMove } from './agent'
 import { findMove, getValidMoves } from './engine'
 import { instrument } from '../shared/instrument'
@@ -7,22 +6,17 @@ import type { WorkerRequest, WorkerResponse } from './protocol'
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
 
-// console.log ในโค้ดของผู้เล่นให้มาโผล่ที่แผงคอนโซลของเกมด้วย
 captureConsole(ctx as unknown as { console: Console }, () => currentLine)
 
-/** ระยะห่างขั้นต่ำระหว่างการรายงานเมธอดที่กำลังรัน (ms) */
 const TRACE_INTERVAL = 40
 
-/** ชื่อฟังก์ชันที่แทรกไว้หน้าทุกคำสั่งของผู้เล่น เพื่อรู้ว่ากำลังรันบรรทัดไหน */
 const LINE_MARKER = '__othelloLine'
 
-/** ตรวจนาฬิกาทุกกี่คำสั่ง — ไม่ต้องเรียก Date.now() ทุกบรรทัด */
 const CLOCK_EVERY = 2048
 
 let agent: OthelloAgent | null = null
 let traced = false
 
-/** บรรทัดที่กำลังรัน และจำนวนครั้งที่รันแต่ละบรรทัด */
 let currentLine = 0
 let lineCounts: Record<number, number> = {}
 let marks = 0
@@ -71,7 +65,6 @@ function enterMethod(method: string) {
   sendTick(method)
 }
 
-/** ตัวนับบรรทัด ถูกเรียกหน้าทุกคำสั่งของผู้เล่น จึงต้องเบาที่สุด */
 function markLine(line: number) {
   currentLine = line
   lineCounts[line] = (lineCounts[line] ?? 0) + 1
@@ -83,10 +76,6 @@ function exitMethod() {
   trace?.stack.pop()
 }
 
-/**
- * ห่อทุกเมธอดของ agent ไว้ด้วยตัวนับ เพื่อให้หน้าจอเห็นว่ากำลังรันเมธอดไหน
- * เขียนทับเป็น own property ของอินสแตนซ์ การเรียกซ้ำผ่าน this.xxx() จึงถูกนับด้วย
- */
 function watch(instance: OthelloAgent): OthelloAgent {
   const names = new Set<string>()
 
@@ -127,13 +116,8 @@ function watch(instance: OthelloAgent): OthelloAgent {
   return instance
 }
 
-/**
- * คอมไพล์โค้ดของผู้เล่น
- * โค้ดถูกรันในสโคปปิดที่มองเห็นแค่ OthelloAgent กับค่าคงที่ EMPTY / BLACK / WHITE
- * และต้องประกาศคลาสชื่อ Agent เอาไว้
- */
-function build(code: string, memory: AgentMemory | null): OthelloAgent {
-  // แทรกตัวนับบรรทัดก่อน ถ้าโค้ดมี syntax error จะได้โค้ดเดิมกลับมาและปล่อยให้ new Function ฟ้อง
+function build(code: string, memory: AgentMemory | null, frozen = false): OthelloAgent {
+
   const marked = instrument(code, LINE_MARKER)
   traced = marked.ok && marked.lines.length > 0
 
@@ -178,7 +162,6 @@ return Agent;`
 
   instance.memory = memory
 
-  // ต่อสาย saveMemory() ให้ส่งข้อมูลกลับไปเก็บที่ฝั่งหน้าเว็บ
   Object.defineProperty(instance, 'saveMemory', {
     configurable: true,
     writable: true,
@@ -188,8 +171,9 @@ return Agent;`
         throw new Error('saveMemory() ต้องรับ object ธรรมดา')
       }
 
-      // อัปเดตให้ this.memory ตรงกับที่เพิ่งบันทึกเสมอ
-      // ระหว่างฝึกซ้อม worker ตัวเดิมเล่นหลายเกม จะได้อ่านค่าล่าสุดต่อได้ทันที
+      // คู่ซ้อมที่ถูกตรึงไว้ ให้จำเหมือนเดิมทุกเกม — เรียก saveMemory ได้ แต่ไม่มีผล
+      if (frozen) return
+
       instance.memory = data
       post({ type: 'memory', data })
     }
@@ -198,7 +182,6 @@ return Agent;`
   return watch(instance)
 }
 
-/** แปลงค่าที่ agent คืนมาให้เป็น { row, col } พร้อมตรวจว่าลงได้จริง */
 function normalize(raw: AgentMove, request: WorkerRequest & { type: 'move' }): { row: number; col: number } {
   if (raw === null || raw === undefined) {
     throw new Error('chooseMove() ไม่ได้คืนค่าตาที่จะลง')
@@ -225,7 +208,7 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
   try {
     switch (request.type) {
       case 'init': {
-        agent = build(request.code, request.memory)
+        agent = build(request.code, request.memory, request.frozen ?? false)
         post({ type: 'ready', name: typeof agent.name === 'string' ? agent.name : 'Agent', traced })
         break
       }

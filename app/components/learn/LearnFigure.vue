@@ -3,7 +3,6 @@ import type { Figure } from '~/data/algorithm-figures'
 
 const props = defineProps<{ figure: Figure }>()
 
-/** วาดเส้นทางเต็มเส้นทันที ไม่ต้องเล่นอนิเมชัน — นี่เป็นภาพนิ่ง ไม่ใช่การรัน */
 const walkShown = computed(() =>
   props.figure.kind === 'maze' ? Math.max(props.figure.path.length - 1, 0) : 0
 )
@@ -25,8 +24,36 @@ const walkShown = computed(() =>
         :max-height="340"
       />
 
-      <div v-else class="mx-auto w-full max-w-[22rem]">
+      <div v-else-if="figure.kind === 'chase'" class="mx-auto w-full max-w-[34rem]">
+        <ChaseArena
+          quiet
+          :match="figure.match"
+          :hunter-looked="figure.looked"
+          :runner-looked="figure.runnerLooked ?? []"
+          :duration="0"
+          status="idle"
+        />
+      </div>
+
+      <div v-else-if="figure.kind === 'runner'" class="mx-auto w-full max-w-[40rem]">
+        <DinoTrack quiet :run="figure.run" status="paused" :watched="figure.watched" />
+      </div>
+
+      <div v-else-if="figure.kind === 'line'" class="mx-auto w-full max-w-[40rem]">
+        <LineField quiet :run="figure.run" status="over" :watched="figure.watched" />
+      </div>
+
+      <div v-else-if="figure.kind === 'othello'" class="mx-auto w-full max-w-[22rem]">
         <OthelloBoard :board="figure.board" :valid-moves="figure.moves" :last-move="figure.last" />
+      </div>
+
+      <div v-else class="mx-auto w-full max-w-[30rem]">
+        <HanoiBoard
+          :puzzle="figure.puzzle"
+          :towers="figure.towers"
+          :last="figure.last"
+          :duration="0"
+        />
       </div>
     </div>
 

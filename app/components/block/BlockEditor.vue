@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { BlockPack, BlockProgram } from '~/game/blocks/pack'
 import { BLOCK_EDITOR, useBlockDrag, type BlockEditorApi } from '~/composables/useBlockEditor'
+import { countProgram } from '~/game/blocks/program'
+import { UNSAVED_CHOICE, useProgramChoices } from '~/composables/useProgramLibrary'
+import { downloadText, exportProgram, fileName, pickTextFile, readProgramFile } from '~/game/blocks/transfer'
 
 const open = defineModel<boolean>('open', { required: true })
 
@@ -10,43 +13,106 @@ const props = defineProps<{
   api: BlockEditorApi
   presetId: string
   title?: string
-  /** ตัวอย่างสำเร็จรูป — ดูได้แต่แก้ไม่ได้จนกว่าจะคัดลอก */
+
   locked?: boolean
 }>()
 
-const emit = defineEmits<{ preset: [id: string]; rename: [name: string]; clone: [] }>()
+const emit = defineEmits<{
+  preset: [id: string]
+  rename: [name: string]
+  clone: []
+  /** เริ่มโปรแกรมใหม่ว่าง ๆ */
+  create: []
+  /** ใช้โปรแกรมที่อ่านมาจากไฟล์ */
+  load: [program: BlockProgram]
+  /** ลบโปรแกรมนี้ออกจากคลังของฉัน */
+  remove: []
+}>()
 
 provide(BLOCK_EDITOR, props.api)
 
 const { dragging } = useBlockDrag()
 
-/** คัดลอกแล้วจะไม่ตรงกับตัวอย่างไหนอีก จึงต้องมีตัวเลือกของโปรแกรมตัวเองไว้ให้ค่าไม่ค้าง */
-const MINE = '__mine__'
+const choices = useProgramChoices(() => ({ pack: props.pack, program: props.program, presetId: props.presetId }))
 
-const presetOptions = computed(() => {
-  const options = props.pack.presets.map((preset) => ({ value: preset.id, label: preset.name }))
-  return props.presetId ? options : [{ value: MINE, label: props.program.name }, ...options]
-})
+const presetOptions = choices.options
 
-const selected = ref(props.presetId || MINE)
-
-watch(open, (value) => {
-  if (value) selected.value = props.presetId || MINE
-})
-
-watch(
-  () => props.presetId,
-  (value) => {
-    selected.value = value || MINE
+const selected = computed({
+  get: () => choices.current.value,
+  set: (value: string) => {
+    if (value !== UNSAVED_CHOICE && value !== choices.current.value) emit('preset', value)
   }
-)
-
-watch(selected, (value) => {
-  if (value !== MINE && value !== props.presetId) emit('preset', value)
 })
 
 const description = computed(
   () => props.pack.presets.find((preset) => preset.id === props.presetId)?.description ?? ''
+)
+
+/** ข้อความสั้น ๆ หลังนำเข้า/ส่งออก — บอกว่าสำเร็จ หรือทำไมไม่สำเร็จ */
+const notice = ref<{ tone: 'ok' | 'warn'; text: string } | null>(null)
+
+watch(open, (value) => {
+  if (value) notice.value = null
+})
+
+/**
+ * โปรแกรมที่ต่อเองอยู่จะถูกแทนที่ — ถามก่อนถ้ามีบล็อกอยู่แล้ว
+ * ตัวอย่างสำเร็จรูปไม่ต้องถาม เพราะเลือกกลับมาจากช่องตัวอย่างได้เสมอ
+ */
+function confirmReplace(action: string): boolean {
+  if (props.locked || countProgram(props.program) === 0) return true
+  return window.confirm(`${action}แล้ว "${props.program.name}" ที่ต่อไว้จะหายไป — ส่งออกเก็บไว้ก่อนได้ถ้ายังอยากเก็บ ต่อเลยไหม?`)
+}
+
+function create() {
+  if (!confirmReplace('เริ่มโปรแกรมใหม่')) return
+  emit('create')
+  notice.value = { tone: 'ok', text: 'เริ่มโปรแกรมใหม่แล้ว — ลากบล็อกจากกล่องเครื่องมือมาต่อใต้หัว "เมื่อ…" ได้เลย' }
+}
+
+function exportFile() {
+  downloadText(exportProgram(props.program, props.pack), fileName(props.program.name, 'blocks'))
+  notice.value = { tone: 'ok', text: `ส่งออก "${props.program.name}" เป็นไฟล์แล้ว` }
+}
+
+async function importFile() {
+  const picked = await pickTextFile()
+  if (!picked) return
+  if (!picked.ok) {
+    notice.value = { tone: 'warn', text: picked.message }
+    return
+  }
+
+  const read = readProgramFile(picked.value, props.pack)
+  if (!read.ok) {
+    notice.value = { tone: 'warn', text: read.message }
+    return
+  }
+
+  if (!confirmReplace('นำเข้า')) return
+  emit('load', read.value)
+  notice.value = {
+    tone: read.note ? 'warn' : 'ok',
+    text: `นำเข้า "${read.value.name}" แล้ว${read.note ? ` · ${read.note}` : ''}`
+  }
+}
+
+function remove() {
+  const name = props.program.name
+  if (!window.confirm(`ลบ "${name}" ออกจากโปรแกรมของฉัน? ลบแล้วเอากลับมาไม่ได้ — ส่งออกเก็บไว้ก่อนได้ถ้ายังอยากเก็บ`)) return
+
+  emit('remove')
+  notice.value = { tone: 'ok', text: `ลบ "${name}" แล้ว` }
+}
+
+/** ปุ่มไอคอนบนแถบเครื่องมือ — ชื่อเต็มขึ้นตอนชี้ และโปรแกรมอ่านหน้าจออ่านจาก aria-label */
+const tools = computed(() =>
+  [
+    { id: 'new', label: 'โปรแกรมใหม่ (ว่างเปล่า)', show: true, run: create },
+    { id: 'import', label: 'นำเข้าโปรแกรมจากไฟล์', show: true, run: importFile },
+    { id: 'export', label: 'ส่งออกโปรแกรมนี้เป็นไฟล์', show: !props.locked, run: exportFile },
+    { id: 'delete', label: 'ลบโปรแกรมนี้', show: !props.locked && !!props.program.libraryId, run: remove }
+  ].filter((tool) => tool.show)
 )
 
 function onTrash() {
@@ -68,7 +134,6 @@ function onTrash() {
       </div>
 
       <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-        <!-- ตัวอย่างสำเร็จรูปแก้ไม่ได้ ต้องคัดลอกก่อน จะได้ไม่แก้ตัวอย่างจนพังแล้วกลับไม่ได้ -->
         <div
           v-if="locked"
           class="flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 ring-1 ring-amber-200"
@@ -78,11 +143,55 @@ function onTrash() {
             <path d="M8 11V8a4 4 0 118 0v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
 
-          <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-amber-900">
-            นี่คือตัวอย่างสำเร็จรูป แก้ไม่ได้ — กดคัดลอกเพื่อสร้างโปรแกรมของตัวเองที่แก้ได้
-          </p>
+          <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-amber-900">ตัวอย่างสำเร็จรูป</p>
 
           <UiButton size="sm" @click="emit('clone')">คัดลอกไปแก้</UiButton>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-1.5">
+          <button
+            v-for="tool in tools"
+            :key="tool.id"
+            type="button"
+            :title="tool.label"
+            :aria-label="tool.label"
+            class="grid size-8 place-items-center rounded-lg border transition-colors"
+            :class="
+              tool.id === 'delete'
+                ? 'border-line bg-surface text-ink-subtle hover:border-red-300 hover:bg-red-50 hover:text-red-600'
+                : 'border-line bg-surface text-ink-muted hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700'
+            "
+            @click="tool.run"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4" aria-hidden="true">
+              <template v-if="tool.id === 'new'">
+                <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
+                <path d="M14 3v5h5M12 11v6M9 14h6" />
+              </template>
+              <template v-else-if="tool.id === 'import'">
+                <path d="M12 3v12M7 10l5 5 5-5" />
+                <path d="M5 21h14" />
+              </template>
+              <template v-else-if="tool.id === 'export'">
+                <path d="M12 15V3M7 8l5-5 5 5" />
+                <path d="M5 21h14" />
+              </template>
+              <template v-else>
+                <path d="M4 7h16M10 11v6M14 11v6" />
+                <path d="M6 7l1 13a1 1 0 001 1h8a1 1 0 001-1l1-13M9 7V4h6v3" />
+              </template>
+            </svg>
+          </button>
+
+          <p
+            v-if="notice"
+            role="status"
+            class="min-w-0 flex-1 truncate text-[11px]"
+            :class="notice.tone === 'ok' ? 'text-ink-subtle' : 'text-amber-700'"
+            :title="notice.text"
+          >
+            {{ notice.text }}
+          </p>
         </div>
 
         <label class="flex items-center gap-2">

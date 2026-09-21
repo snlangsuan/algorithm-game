@@ -1,9 +1,3 @@
-/**
- * ตัวอย่าง "วิวัฒนาการ" (GA) ที่เขียนด้วยบล็อกล้วน ต้องเล่นเก่งขึ้นจริงเมื่อซ้อมไปเรื่อย ๆ
- *
- * ผลสั่นมากเพราะ fitness มาจากเกมเดียว เทสต์นี้จึงวัดค่าเฉลี่ยหลายรอบ ไม่ตัดสินรอบเดียว
- * ห้ามเปลี่ยน fitness กลับไปใช้แพ้/ชนะ — เคยลองแล้วแย่ลงชัดเจน (สัญญาณ 1 บิตต่อเกมหยาบเกินไป)
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -24,7 +18,6 @@ import {
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 import { usesBlock } from '~/game/blocks/program'
 
-/** สร้าง agent จากตัวอย่างสำเร็จรูป โดยแปลงบล็อกเป็นโค้ดแล้วรันเหมือนที่ worker ทำ */
 function build(presetId: string): OthelloAgent {
   const preset = OTHELLO_PACK.presets.find((item) => item.id === presetId)
   assert.ok(preset, `ไม่มีตัวอย่างชื่อ '${presetId}'`)
@@ -39,14 +32,13 @@ function build(presetId: string): OthelloAgent {
   )
   const Agent = factory(OthelloAgent, AGENT_GLOBALS.EMPTY, AGENT_GLOBALS.BLACK, AGENT_GLOBALS.WHITE)
   const agent: OthelloAgent = new Agent()
-  // ในเบราว์เซอร์ระบบเก็บความจำลง localStorage ให้ ในเทสต์เก็บไว้ในตัวเองพอ
+
   agent.saveMemory = (data: AgentMemory) => {
     agent.memory = data
   }
   return agent
 }
 
-/** เล่นหนึ่งเกมจนจบ คืนผู้ชนะ (null = เสมอ) */
 function play(black: OthelloAgent, white: OthelloAgent): Player | null {
   const players: Record<Player, OthelloAgent> = { [BLACK]: black, [WHITE]: white }
   for (const side of [BLACK, WHITE] as Player[]) players[side].onGameStart(side)
@@ -86,14 +78,8 @@ const GAMES = 80
 const WINDOW = 25
 const ROUNDS = 40
 
-/**
- * GA มีสุ่มอยู่ในตัว ผลจึงสั่นมาก — รันจริง 15 ครั้งแบบไม่ล็อกเลขสุ่ม ตก 3 ครั้ง
- * เทสต์นี้จึงล็อกเลขสุ่มไว้ให้ได้ผลเดิมทุกครั้ง และใช้ 40 รอบเพื่อไม่ให้ผลมาจากเลขสุ่มชุดเดียว
- * (ลองกวาด 12 seed ที่ 40 รอบแล้ว ดีขึ้นทั้ง 12 — ที่ 6 รอบ ตก 2/12)
- */
 const SEED = 7919
 
-/** ตัวสุ่มแบบล็อกค่าได้ (mulberry32) ใช้แทน Math.random ระหว่างเทสต์ */
 function seededRandom(seed: number): () => number {
   let state = seed
   return () => {
@@ -106,7 +92,7 @@ function seededRandom(seed: number): () => number {
 }
 
 test('ตัวอย่าง "วิวัฒนาการ" ใช้บล็อกความจำจริง ไม่ใช่แค่ดูโค้ดแล้วเดา', () => {
-  // ห้ามเช็คด้วยการ scan โค้ดที่แปลงแล้ว — CORE_HELPERS ที่ระบบเติมให้มีคำว่า saveMemory( อยู่
+
   const evolve = OTHELLO_PACK.presets.find((item) => item.id === 'evolve')!
   assert.ok(usesBlock(normalize(evolve.build(), OTHELLO_PACK), ['remember', 'forget']))
 })
@@ -147,4 +133,120 @@ test(`GA ซ้อมแล้วเล่นเก่งขึ้น (เฉล
     after > before,
     `ซ้อมแล้วควรชนะบ่อยขึ้น แต่ได้ ${before.toFixed(1)}% -> ${after.toFixed(1)}%`
   )
+})
+
+/**
+ * ซ้อมแล้วต้องเก่งจริง ไม่ใช่ซ้อมเท่าไรก็เท่าเดิม
+ *
+ * เคยพลาดตรงนี้มาแล้ว — ตัวอย่าง GA เคยกลายพันธุ์ทีละ 6 ช่องจาก 64 ช่อง "ทุกเกม" รวมตอนเล่นจริง
+ * ของดีที่สะสมไว้จึงถูกสุ่มทิ้งเร็วกว่าที่จะสะสมได้ ซ้อม 50 เกมกับ 400 เกมเก่งพอกันที่ราว 30%
+ * เทสต์นี้พกความจำข้ามรอบเหมือนหน้าเกม แล้ววัดว่าแชมป์ที่ซ้อมมาแล้วชนะ "ยึดมุม" ได้เกินครึ่งจริง
+ */
+test('GA ซ้อม 200 เกมแล้วแกร่งกว่ายึดมุมชัดเจน', { timeout: 180_000 }, () => {
+  const realRandom = Math.random
+
+  /** ซ้อมต่อจากความจำเดิม แล้วคืนความจำที่ได้ — เหมือนกดฝึกอีกรอบในหน้าเกม */
+  const trainOn = (memory: AgentMemory | null, games: number): AgentMemory | null => {
+    const ga = build('evolve')
+    ga.memory = memory
+
+    for (let game = 0; game < games; game++) play(ga, build('corner'))
+    return ga.memory
+  }
+
+  /** วัดฝีมือแชมป์ที่จำไว้ — ห้ามบันทึกทับระหว่างวัด ไม่งั้นมันแอบซ้อมต่อ */
+  const winRate = (memory: AgentMemory | null, games: number): number => {
+    let wins = 0
+
+    for (let game = 0; game < games; game++) {
+      const ga = build('evolve')
+      ga.memory = memory
+      ga.saveMemory = () => {}
+
+      if (play(ga, build('corner')) === BLACK) wins++
+    }
+
+    return (wins / games) * 100
+  }
+
+  try {
+    let raw = 0
+    let trained = 0
+
+    // เฉลี่ยหลายเมล็ดสุ่ม เพราะคะแนนจากเกมเดียวแกว่งแรง บางเมล็ดก็ได้แชมป์ดีตั้งแต่ต้น
+    const seeds = [4517, 881, 20260920]
+
+    for (const seed of seeds) {
+      Math.random = seededRandom(seed)
+
+      raw += winRate(null, 40)
+      trained += winRate(trainOn(trainOn(null, 50), 150), 40)
+    }
+
+    const before = raw / seeds.length
+    const after = trained / seeds.length
+
+    console.log(`  ยังไม่ซ้อมชนะ ${before.toFixed(0)}% -> ซ้อม 200 เกมชนะ ${after.toFixed(0)}%`)
+
+    assert.ok(
+      after > 55,
+      `ซ้อม 200 เกมแล้วควรชนะ 'ยึดมุม' ได้เกินครึ่ง แต่ได้แค่ ${after.toFixed(0)}% — กลายพันธุ์แรงไปจนของดีไม่สะสมหรือเปล่า`
+    )
+    assert.ok(after > before + 20, `ซ้อมแล้วดีขึ้นแค่ ${(after - before).toFixed(0)} จุด`)
+  } finally {
+    Math.random = realRandom
+  }
+})
+
+/**
+ * ความจำที่บาร์ค้างสูง ต้องกู้กลับได้
+ *
+ * เคยพลาดตรงนี้มาแล้ว — บาร์คะแนนเคยขึ้นอย่างเดียว พอเผลอไปฟลุกทำคะแนนสูงไว้ครั้งเดียว
+ * (เช่นซ้อม GA กับ GA ด้วยกัน) แชมป์ก็ไม่มีวันถูกแทนอีกเลย ซ้อมกับใครต่ออีกกี่ร้อยเกมก็ชนะ 3%
+ * ทางแก้เดียวคือกด "ล้าง" ซึ่งไม่มีใครเดาออก
+ */
+test('บาร์คะแนนที่ค้างอยู่สูง ต้องไหลลงจนกลับมาเรียนรู้ได้', { timeout: 120_000 }, () => {
+  const realRandom = Math.random
+  Math.random = seededRandom(31337)
+
+  try {
+    // ความจำที่ติดล็อก: น้ำหนักเท่ากันหมดทุกช่อง (เล่นไม่เป็น) แต่บาร์ถูกดันไว้เกือบเต็มกระดาน
+    const stuck: AgentMemory = { a: Array.from({ length: 64 }, () => 10), b: 62 }
+
+    const winRate = (memory: AgentMemory | null, games: number): number => {
+      let wins = 0
+
+      for (let game = 0; game < games; game++) {
+        const ga = build('evolve')
+        ga.memory = memory
+        ga.saveMemory = () => {}
+
+        if (play(ga, build('corner')) === BLACK) wins++
+      }
+
+      return (wins / games) * 100
+    }
+
+    const before = winRate(stuck, 40)
+
+    const ga = build('evolve')
+    ga.memory = stuck
+    for (let game = 0; game < 150; game++) play(ga, build('corner'))
+
+    const after = winRate(ga.memory, 40)
+    const bar = (ga.memory as Record<string, unknown>).b
+
+    console.log(`  ความจำที่ค้าง (b=62) ชนะ ${before.toFixed(0)}% -> ซ้อมต่อ 150 เกมชนะ ${after.toFixed(0)}% (บาร์เหลือ ${bar})`)
+
+    assert.ok(
+      Number(bar) < 62,
+      `บาร์ต้องไหลลงได้เมื่อไม่มีใครชนะ แต่ยังค้างที่ ${bar} — ความจำจะตันถาวร`
+    )
+    assert.ok(
+      after > before + 25,
+      `ซ้อมต่อแล้วต้องกู้กลับมาได้ แต่ได้ ${before.toFixed(0)}% -> ${after.toFixed(0)}%`
+    )
+  } finally {
+    Math.random = realRandom
+  }
 })

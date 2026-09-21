@@ -4,7 +4,7 @@ import type { GameStatus, SideConfig } from '~/composables/useOthelloGame'
 
 const props = defineProps<{
   sides: Record<Player, SideConfig>
-  /** ชื่อโปรแกรมของแต่ละฝั่ง */
+
   names: Record<Player, string>
   scores: DiscCount
   current: Player

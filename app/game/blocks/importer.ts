@@ -3,40 +3,23 @@ import type { BlockPack, BlockProgram } from './pack'
 import { createBlock } from './program'
 import { RAW_STATEMENT, RAW_VALUE, type BlockNode } from './types'
 
-/**
- * อ่านโค้ดกลับมาเป็นบล็อก
- *
- * รูปแบบที่ตัวแปลงบล็อกสร้างไว้จะถูกจับคู่กลับได้ครบ ส่วนโค้ดที่เขียนเองแล้วยังไม่มีบล็อกรองรับ
- * จะถูกห่อไว้ในบล็อก "โค้ดของฉัน" ทั้งก้อน ทำให้แปลงไปกลับได้เสมอโดยไม่มีอะไรหาย
- */
-
-/** โหนดของ AST — ใช้แบบหลวม ๆ เพราะเราแตะแค่ไม่กี่ชนิด */
 export type Node = Record<string, any>
 
 export interface ParseContext {
-  /** โค้ดต้นฉบับของโหนดนั้น */
   text: (node: Node) => string
-  /** สร้างบล็อก */
   make: (
     kind: string,
     fields?: Record<string, string | number>,
     inputs?: Record<string, BlockNode | null>,
     bodies?: Record<string, BlockNode[]>
   ) => BlockNode
-  /** แปลงนิพจน์เป็นบล็อกค่า (ถ้าไม่รู้จักจะได้บล็อกโค้ดดิบ) */
   value: (node: Node) => BlockNode
-  /** แปลงลำดับคำสั่งเป็นบล็อก */
   body: (node: Node) => BlockNode[]
-  /** ถ้าเป็นการเรียก this.<name>(...) คืนอาร์กิวเมนต์ ไม่ใช่ก็คืน null */
   call: (node: Node, name: string) => Node[] | null
-  /** ถ้าเป็นการเรียก <object>.<name>(...) คืนอาร์กิวเมนต์ */
   method: (node: Node, name: string) => { target: Node; args: Node[] } | null
-  /** ค่าคงที่ข้อความ / ตัวเลข */
   str: (node: Node) => string | null
   num: (node: Node) => number | null
-  /** เป็น this.<name> ไหม */
   thisProp: (node: Node, ...path: string[]) => boolean
-  /** คำสั่ง return คืนค่าอะไร (undefined ถ้าไม่ใช่ return) */
   returned: (node: Node) => Node | null | undefined
 }
 
@@ -50,401 +33,405 @@ export interface PackParsers {
 export interface ImportResult {
   ok: boolean
   program?: BlockProgram
-  /** จำนวนส่วนที่แปลงเป็นบล็อกตรง ๆ ไม่ได้ แล้วถูกห่อเป็นบล็อกโค้ด */
   raw: number
   message: string
 }
 
-const MATH_ONE = new Set(['abs', 'round', 'floor', 'ceil', 'sqrt'])
+const str = (node: Node): string | null =>
+  node?.type === 'Literal' && typeof node.value === 'string' ? node.value : null
 
-export function importProgram(code: string, pack: BlockPack): ImportResult {
-  let ast: Node
+const num = (node: Node): number | null =>
+  node?.type === 'Literal' && typeof node.value === 'number' ? node.value : null
 
-  try {
-    ast = parseJs(code, { ecmaVersion: 'latest', locations: false, ranges: true }) as unknown as Node
-  } catch (error) {
-    return { ok: false, raw: 0, message: `โค้ดยังมีที่ผิดอยู่: ${(error as Error).message}` }
+const returned = (node: Node): Node | null | undefined =>
+  node?.type === 'ReturnStatement' ? (node.argument ?? null) : undefined
+
+function thisProp(node: Node, ...path: string[]): boolean {
+  let cursor = node
+
+  for (const name of [...path].reverse()) {
+    if (cursor?.type !== 'MemberExpression' || cursor.property?.name !== name) return false
+    cursor = cursor.object
   }
 
+  return cursor?.type === 'ThisExpression'
+}
+
+function thisCall(node: Node, name: string): Node[] | null {
+  if (node?.type !== 'CallExpression') return null
+  if (!thisProp(node.callee, name)) return null
+  return node.arguments
+}
+
+function methodCall(node: Node, name: string): { target: Node; args: Node[] } | null {
+  if (node?.type !== 'CallExpression') return null
+  if (node.callee?.type !== 'MemberExpression' || node.callee.property?.name !== name) return null
+  return { target: node.callee.object, args: node.arguments }
+}
+
+function mathCall(node: Node, name: string): Node[] | null {
+  if (node?.type !== 'CallExpression') return null
+  if (node.callee?.type !== 'MemberExpression') return null
+  if (node.callee.object?.name !== 'Math' || node.callee.property?.name !== name) return null
+  return node.arguments
+}
+
+const varName = (node: Node): string | null =>
+  node?.type === 'MemberExpression' &&
+  node.object?.type === 'MemberExpression' &&
+  node.object.object?.type === 'ThisExpression' &&
+  node.object.property?.name === 'vars'
+    ? (node.property?.name ?? null)
+    : null
+
+function listName(node: Node): string | null {
+  const args = thisCall(node, 'list')
+  return args ? str(args[0]!) : null
+}
+
+function randomSpread(node: Node): number | null {
+  const floor = mathCall(node, 'floor')
+  if (!floor || floor[0]?.type !== 'BinaryExpression' || floor[0].operator !== '*') return null
+  if (!mathCall(floor[0].left, 'random')) return null
+  return num(floor[0].right)
+}
+
+function randomRange(node: Node): { min: number; max: number } | null {
+  const plain = randomSpread(node)
+  if (plain !== null) return { min: 0, max: Math.max(0, plain - 1) }
+
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const span = randomSpread(node.left)
+    // ค่าต่ำสุดติดลบถูกเขียนเป็น "+ -8" ซึ่ง parser อ่านเป็นเครื่องหมายลบนำหน้า ไม่ใช่ตัวเลขตรง ๆ
+    const negative = node.right?.type === 'UnaryExpression' && node.right.operator === '-'
+    const magnitude = num(negative ? node.right.argument : node.right)
+    const min = magnitude === null ? null : negative ? -magnitude : magnitude
+    if (span !== null && min !== null) return { min, max: min + span - 1 }
+  }
+
+  return null
+}
+
+function firstMatch(matchers: Matcher[] | undefined, node: Node, ctx: ParseContext): BlockNode | null {
+  for (const matcher of matchers ?? []) {
+    const found = matcher(node, ctx)
+    if (found) return found
+  }
+
+  return null
+}
+
+const literalValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'Literal') return null
+  if (typeof node.value === 'number') return ctx.make('number', { value: node.value })
+  if (typeof node.value === 'boolean') return ctx.make('bool', { value: node.value ? 'true' : 'false' })
+  if (typeof node.value === 'string') return ctx.make('text', { value: node.value })
+  return null
+}
+
+const negativeValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'UnaryExpression' || node.operator !== '-') return null
+  if (node.argument?.type !== 'Literal' || typeof node.argument.value !== 'number') return null
+  return ctx.make('number', { value: -node.argument.value })
+}
+
+const joinValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'TemplateLiteral') return null
+  if (node.expressions?.length !== 2 || node.quasis?.length !== 3) return null
+  if (!node.quasis.every((part: Node) => part.value?.raw === '')) return null
+
+  return ctx.make('join', {}, { left: ctx.value(node.expressions[0]), right: ctx.value(node.expressions[1]) })
+}
+
+const notValue: Matcher = (node, ctx) =>
+  node?.type === 'UnaryExpression' && node.operator === '!'
+    ? ctx.make('not', {}, { value: ctx.value(node.argument) })
+    : null
+
+const LOGIC: Record<string, string> = { '&&': 'and', '||': 'or' }
+
+const logicValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'LogicalExpression') return null
+
+  const kind = LOGIC[node.operator]
+  return kind ? ctx.make(kind, {}, { left: ctx.value(node.left), right: ctx.value(node.right) }) : null
+}
+
+const randomValue: Matcher = (node, ctx) => {
+  const dice = randomRange(node)
+  return dice ? ctx.make('random', dice) : null
+}
+
+const COMPARE: Record<string, string> = {
+  '<': 'lt',
+  '<=': 'lte',
+  '===': 'eq',
+  '==': 'eq',
+  '!==': 'ne',
+  '!=': 'ne',
+  '>=': 'gte',
+  '>': 'gt'
+}
+
+const MATH: Record<string, string> = { '+': 'add', '-': 'sub', '*': 'mul', '/': 'div' }
+
+const binaryValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'BinaryExpression') return null
+
+  const compare = COMPARE[node.operator]
+  const math = MATH[node.operator]
+  const mod = node.operator === '%'
+  if (!compare && !math && !mod) return null
+
+  const sides = { left: ctx.value(node.left), right: ctx.value(node.right) }
+
+  if (compare) return ctx.make('compare', { op: compare }, sides)
+  if (math) return ctx.make('math', { op: math }, sides)
+  return ctx.make('math-fn', { fn: 'mod' }, sides)
+}
+
+const MATH_ONE = ['abs', 'round', 'floor', 'ceil', 'sqrt']
+const MATH_TWO = ['min', 'max', 'pow']
+
+const mathOneValue: Matcher = (node, ctx) => {
+  for (const name of MATH_ONE) {
+    const args = mathCall(node, name)
+    if (args) return ctx.make('math-one', { fn: name }, { value: ctx.value(args[0]!) })
+  }
+
+  return null
+}
+
+const mathTwoValue: Matcher = (node, ctx) => {
+  for (const name of MATH_TWO) {
+    const args = mathCall(node, name)
+    if (args?.length === 2) {
+      return ctx.make('math-fn', { fn: name }, { left: ctx.value(args[0]!), right: ctx.value(args[1]!) })
+    }
+  }
+
+  return null
+}
+
+const varGetValue: Matcher = (node, ctx) => {
+  const variable = varName(node)
+  return variable ? ctx.make('var-get', { name: variable }) : null
+}
+
+const listLengthValue: Matcher = (node, ctx) => {
+  if (node?.type !== 'MemberExpression' || node.property?.name !== 'length') return null
+
+  const list = listName(node.object)
+  return list ? ctx.make('list-length', { name: list }) : null
+}
+
+const listHasValue: Matcher = (node, ctx) => {
+  const includes = methodCall(node, 'includes')
+  if (!includes) return null
+
+  const list = listName(includes.target)
+  return list ? ctx.make('list-has', { name: list }, { value: ctx.value(includes.args[0]!) }) : null
+}
+
+const listItemValue: Matcher = (node, ctx) => {
+  const at = thisCall(node, 'at')
+  if (!at) return null
+
+  const list = str(at[0]!)
+  return list ? ctx.make('list-item', { name: list }, { index: ctx.value(at[1]!) }) : null
+}
+
+const recallValue: Matcher = (node, ctx) => {
+  const args = thisCall(node, 'recall')
+  if (!args) return null
+
+  const slot = str(args[0]!)
+  return slot ? ctx.make('recall', { slot }) : null
+}
+
+const CORE_VALUES: Matcher[] = [
+  literalValue,
+  negativeValue,
+  joinValue,
+  notValue,
+  logicValue,
+  randomValue,
+  binaryValue,
+  mathOneValue,
+  mathTwoValue,
+  varGetValue,
+  listLengthValue,
+  listHasValue,
+  listItemValue,
+  recallValue
+]
+
+const ifStatement: Matcher = (node, ctx) => {
+  if (node.type !== 'IfStatement') return null
+
+  const cond = ctx.value(node.test)
+
+  if (node.alternate) {
+    return ctx.make('if-else', {}, { cond }, { then: ctx.body(node.consequent), else: ctx.body(node.alternate) })
+  }
+
+  return ctx.make('if', {}, { cond }, { then: ctx.body(node.consequent) })
+}
+
+const whileStatement: Matcher = (node, ctx) => {
+  if (node.type !== 'WhileStatement') return null
+
+  if (node.test?.type === 'UnaryExpression' && node.test.operator === '!') {
+    return ctx.make('repeat-until', {}, { cond: ctx.value(node.test.argument) }, { do: ctx.body(node.body) })
+  }
+
+  return ctx.make('while', {}, { cond: ctx.value(node.test) }, { do: ctx.body(node.body) })
+}
+
+const repeatStatement: Matcher = (node, ctx) => {
+  if (node.type !== 'ForStatement') return null
+
+  const times = num(node.test?.right)
+  const counter = node.init?.declarations?.[0]?.id?.name
+  if (times === null || !counter) return null
+  if (node.test?.operator !== '<' || node.test?.left?.name !== counter) return null
+
+  return ctx.make('repeat', { times }, {}, { do: ctx.body(node.body) })
+}
+
+const forEachStatement: Matcher = (node, ctx) => {
+  if (node.type !== 'ForOfStatement') return null
+
+  const item = varName(node.left)
+  const list = listName(node.right)
+  return item && list ? ctx.make('for-each', { list, item }, {}, { do: ctx.body(node.body) }) : null
+}
+
+const assignExpression: Matcher = (node, ctx) => {
+  if (node?.type !== 'AssignmentExpression') return null
+
+  const variable = varName(node.left)
+  if (!variable) return null
+
+  if (node.operator === '+=') return ctx.make('change-var', { name: variable }, { value: ctx.value(node.right) })
+  if (node.operator !== '=') return null
+
+  if (node.right?.type === 'ArrayExpression' && node.right.elements.length === 0) {
+    return ctx.make('list-clear', { name: variable })
+  }
+
+  return ctx.make('set-var', { name: variable }, { value: ctx.value(node.right) })
+}
+
+const listPushExpression: Matcher = (node, ctx) => {
+  const push = methodCall(node, 'push')
+  if (!push) return null
+
+  const list = listName(push.target)
+  return list ? ctx.make('list-push', { name: list }, { value: ctx.value(push.args[0]!) }) : null
+}
+
+const listPutExpression: Matcher = (node, ctx) => {
+  const put = thisCall(node, 'put')
+  if (!put) return null
+
+  const list = str(put[0]!)
+  return list ? ctx.make('list-put', { name: list }, { index: ctx.value(put[1]!), value: ctx.value(put[2]!) }) : null
+}
+
+const logExpression: Matcher = (node, ctx) => {
+  const printed = thisCall(node, 'print')
+  return printed ? ctx.make('log', {}, { value: ctx.value(printed[0]!) }) : null
+}
+
+const rememberExpression: Matcher = (node, ctx) => {
+  const args = thisCall(node, 'remember')
+  if (!args) return null
+
+  const slot = str(args[0]!)
+  return slot ? ctx.make('remember', { slot }, { value: ctx.value(args[1]!) }) : null
+}
+
+const forgetExpression: Matcher = (node, ctx) => {
+  const args = thisCall(node, 'saveMemory')
+  if (!args || args[0]?.type !== 'ObjectExpression' || args[0].properties.length !== 0) return null
+  return ctx.make('forget')
+}
+
+const CORE_EXPRESSIONS: Matcher[] = [
+  assignExpression,
+  listPushExpression,
+  listPutExpression,
+  logExpression,
+  rememberExpression,
+  forgetExpression
+]
+
+const expressionStatement: Matcher = (node, ctx) =>
+  node.type === 'ExpressionStatement' ? firstMatch(CORE_EXPRESSIONS, node.expression, ctx) : null
+
+const CORE_STATEMENTS: Matcher[] = [
+  ifStatement,
+  whileStatement,
+  repeatStatement,
+  forEachStatement,
+  expressionStatement
+]
+
+interface Importer {
+  ctx: ParseContext
+  statements: (list: Node[]) => BlockNode[]
+  raw: () => number
+}
+
+function createImporter(code: string, pack: BlockPack): Importer {
   let rawCount = 0
 
-  const text = (node: Node): string => code.slice(node.range[0], node.range[1])
+  const text: ParseContext['text'] = (node) => code.slice(node.range[0], node.range[1])
 
   const make: ParseContext['make'] = (kind, fields = {}, inputs = {}, bodies = {}) => {
-    const node = createBlock(kind)
-    Object.assign(node.fields, fields)
-    Object.assign(node.inputs, inputs)
-    Object.assign(node.bodies, bodies)
-    return node
+    const block = createBlock(kind)
+    Object.assign(block.fields, fields)
+    Object.assign(block.inputs, inputs)
+    Object.assign(block.bodies, bodies)
+    return block
   }
 
-  const str = (node: Node): string | null =>
-    node?.type === 'Literal' && typeof node.value === 'string' ? node.value : null
-
-  const num = (node: Node): number | null =>
-    node?.type === 'Literal' && typeof node.value === 'number' ? node.value : null
-
-  const thisProp = (node: Node, ...path: string[]): boolean => {
-    let cursor = node
-
-    for (const name of [...path].reverse()) {
-      if (cursor?.type !== 'MemberExpression' || cursor.property?.name !== name) return false
-      cursor = cursor.object
-    }
-
-    return cursor?.type === 'ThisExpression'
-  }
-
-  const call = (node: Node, name: string): Node[] | null => {
-    if (node?.type !== 'CallExpression') return null
-    if (!thisProp(node.callee, name)) return null
-    return node.arguments
-  }
-
-  const method = (node: Node, name: string): { target: Node; args: Node[] } | null => {
-    if (node?.type !== 'CallExpression') return null
-    if (node.callee?.type !== 'MemberExpression' || node.callee.property?.name !== name) return null
-    return { target: node.callee.object, args: node.arguments }
-  }
-
-  const returned = (node: Node): Node | null | undefined =>
-    node?.type === 'ReturnStatement' ? (node.argument ?? null) : undefined
-
-  /** ชื่อตัวแปรจาก this.vars.X */
-  const varName = (node: Node): string | null =>
-    node?.type === 'MemberExpression' &&
-    node.object?.type === 'MemberExpression' &&
-    node.object.object?.type === 'ThisExpression' &&
-    node.object.property?.name === 'vars'
-      ? (node.property?.name ?? null)
-      : null
-
-  /** ชื่อลิสต์จาก this.list('a') */
-  const listName = (node: Node): string | null => {
-    const args = call(node, 'list')
-    return args ? str(args[0]!) : null
-  }
-
-  const rawValue = (node: Node): BlockNode => {
+  const raw = (kind: string, node: Node): BlockNode => {
     rawCount++
-    return make(RAW_VALUE, { code: text(node) })
+    return make(kind, { code: text(node) })
   }
 
-  const rawStatement = (node: Node): BlockNode => {
-    rawCount++
-    return make(RAW_STATEMENT, { code: text(node) })
-  }
+  const value: ParseContext['value'] = (node) =>
+    firstMatch(pack.parsers?.values, node, ctx) ?? firstMatch(CORE_VALUES, node, ctx) ?? raw(RAW_VALUE, node)
 
-  // ---------- นิพจน์ ----------
+  const statement = (node: Node): BlockNode =>
+    firstMatch(pack.parsers?.statements, node, ctx) ??
+    firstMatch(CORE_STATEMENTS, node, ctx) ??
+    raw(RAW_STATEMENT, node)
 
-  function value(node: Node): BlockNode {
-    const ctx = context
+  const statements = (list: Node[]): BlockNode[] => list.map((item) => statement(item))
 
-    for (const matcher of pack.parsers?.values ?? []) {
-      const found = matcher(node, ctx)
-      if (found) return found
-    }
-
-    const core = coreValue(node)
-    return core ?? rawValue(node)
-  }
-
-  function coreValue(node: Node): BlockNode | null {
-    if (!node) return null
-
-    if (node.type === 'Literal') {
-      if (typeof node.value === 'number') return make('number', { value: node.value })
-      if (typeof node.value === 'boolean') return make('bool', { value: node.value ? 'true' : 'false' })
-      if (typeof node.value === 'string') return make('text', { value: node.value })
-    }
-
-    // -5 ถูก parse เป็น UnaryExpression ไม่ใช่ Literal — บล็อก "ตัวเลข" ใส่ค่าติดลบได้ จึงต้องอ่านกลับได้ด้วย
-    if (
-      node.type === 'UnaryExpression' &&
-      node.operator === '-' &&
-      node.argument?.type === 'Literal' &&
-      typeof node.argument.value === 'number'
-    ) {
-      return make('number', { value: -node.argument.value })
-    }
-
-    // `${a}${b}` -> บล็อก "ต่อข้อความ" (บล็อกนั้นเขียนออกมาเป็นรูปนี้เท่านั้น)
-    if (
-      node.type === 'TemplateLiteral' &&
-      node.expressions?.length === 2 &&
-      node.quasis?.length === 3 &&
-      node.quasis.every((part: Node) => part.value?.raw === '')
-    ) {
-      return make('join', {}, { left: value(node.expressions[0]), right: value(node.expressions[1]) })
-    }
-
-    if (node.type === 'UnaryExpression' && node.operator === '!') {
-      return make('not', {}, { value: value(node.argument) })
-    }
-
-    if (node.type === 'LogicalExpression') {
-      const kind = node.operator === '&&' ? 'and' : node.operator === '||' ? 'or' : null
-      if (kind) return make(kind, {}, { left: value(node.left), right: value(node.right) })
-    }
-
-    // ต้องเช็คก่อน BinaryExpression ข้างล่าง ไม่งั้น 'สุ่ม 1 ถึง 64' ที่ออกมาเป็น
-    // Math.floor(Math.random() * 64) + 1 จะถูกจับเป็นบล็อกบวกก่อน แล้วแตกเป็นสามบล็อก
-    const dice = randomRange(node)
-    if (dice) return make('random', dice)
-
-    if (node.type === 'BinaryExpression') {
-      const compare: Record<string, string> = {
-        '<': 'lt',
-        '<=': 'lte',
-        '===': 'eq',
-        '==': 'eq',
-        '!==': 'ne',
-        '!=': 'ne',
-        '>=': 'gte',
-        '>': 'gt'
-      }
-      const math: Record<string, string> = { '+': 'add', '-': 'sub', '*': 'mul', '/': 'div' }
-
-      if (compare[node.operator]) {
-        return make('compare', { op: compare[node.operator]! }, { left: value(node.left), right: value(node.right) })
-      }
-
-      if (math[node.operator]) {
-        return make('math', { op: math[node.operator]! }, { left: value(node.left), right: value(node.right) })
-      }
-
-      if (node.operator === '%') {
-        return make('math-fn', { fn: 'mod' }, { left: value(node.left), right: value(node.right) })
-      }
-    }
-
-    for (const name of MATH_ONE) {
-      const args = mathCall(node, name)
-      if (args) return make('math-one', { fn: name }, { value: value(args[0]!) })
-    }
-
-    for (const name of ['min', 'max', 'pow']) {
-      const args = mathCall(node, name)
-      if (args && args.length === 2) {
-        return make('math-fn', { fn: name }, { left: value(args[0]!), right: value(args[1]!) })
-      }
-    }
-
-    const variable = varName(node)
-    if (variable) return make('var-get', { name: variable })
-
-    // this.list('a').length / .includes(x) และ this.at('a', n)
-    if (node.type === 'MemberExpression' && node.property?.name === 'length') {
-      const list = listName(node.object)
-      if (list) return make('list-length', { name: list })
-    }
-
-    const includes = method(node, 'includes')
-    if (includes) {
-      const list = listName(includes.target)
-      if (list) return make('list-has', { name: list }, { value: value(includes.args[0]!) })
-    }
-
-    const at = call(node, 'at')
-    if (at) {
-      const list = str(at[0]!)
-      if (list) return make('list-item', { name: list }, { index: value(at[1]!) })
-    }
-
-    const recall = call(node, 'recall')
-    if (recall) {
-      const slot = str(recall[0]!)
-      if (slot) return make('recall', { slot })
-    }
-
-    return null
-  }
-
-  /** รูปแบบของบล็อกสุ่ม ทั้งแบบเริ่มที่ 0 และแบบบวกค่าเริ่มต้น */
-  function randomRange(node: Node): { min: number; max: number } | null {
-    const spread = (inner: Node): number | null => {
-      const floor = mathCall(inner, 'floor')
-      if (!floor || floor[0]?.type !== 'BinaryExpression' || floor[0].operator !== '*') return null
-      if (!mathCall(floor[0].left, 'random')) return null
-      return num(floor[0].right)
-    }
-
-    const plain = spread(node)
-    if (plain !== null) return { min: 0, max: Math.max(0, plain - 1) }
-
-    if (node?.type === 'BinaryExpression' && node.operator === '+') {
-      const span = spread(node.left)
-      const min = num(node.right)
-      if (span !== null && min !== null) return { min, max: min + span - 1 }
-    }
-
-    return null
-  }
-
-  function mathCall(node: Node, name: string): Node[] | null {
-    if (node?.type !== 'CallExpression') return null
-    if (node.callee?.type !== 'MemberExpression') return null
-    if (node.callee.object?.name !== 'Math' || node.callee.property?.name !== name) return null
-    return node.arguments
-  }
-
-  // ---------- คำสั่ง ----------
-
-  function statements(list: Node[]): BlockNode[] {
-    return list.map((item) => statement(item))
-  }
-
-  function body(node: Node): BlockNode[] {
+  const body: ParseContext['body'] = (node) => {
     if (!node) return []
     if (node.type === 'BlockStatement') return statements(node.body)
     return [statement(node)]
   }
 
-  function statement(node: Node): BlockNode {
-    const ctx = context
-
-    for (const matcher of pack.parsers?.statements ?? []) {
-      const found = matcher(node, ctx)
-      if (found) return found
-    }
-
-    return coreStatement(node) ?? rawStatement(node)
+  const ctx: ParseContext = {
+    text,
+    make,
+    value,
+    body,
+    call: thisCall,
+    method: methodCall,
+    str,
+    num,
+    thisProp,
+    returned
   }
 
-  function coreStatement(node: Node): BlockNode | null {
-    if (node.type === 'IfStatement') {
-      const cond = value(node.test)
-
-      if (node.alternate) {
-        return make(
-          'if-else',
-          {},
-          { cond },
-          { then: body(node.consequent), else: body(node.alternate) }
-        )
-      }
-
-      return make('if', {}, { cond }, { then: body(node.consequent) })
-    }
-
-    if (node.type === 'WhileStatement') {
-      if (node.test?.type === 'UnaryExpression' && node.test.operator === '!') {
-        return make('repeat-until', {}, { cond: value(node.test.argument) }, { do: body(node.body) })
-      }
-
-      return make('while', {}, { cond: value(node.test) }, { do: body(node.body) })
-    }
-
-    // for (let i = 0; i < N; i++) -> ทำซ้ำ N ครั้ง
-    if (node.type === 'ForStatement') {
-      const times = num(node.test?.right)
-      const counter = node.init?.declarations?.[0]?.id?.name
-
-      if (times !== null && counter && node.test?.operator === '<' && node.test?.left?.name === counter) {
-        return make('repeat', { times }, {}, { do: body(node.body) })
-      }
-    }
-
-    // for (this.vars.b of this.list('a'))
-    if (node.type === 'ForOfStatement') {
-      const item = varName(node.left)
-      const list = listName(node.right)
-      if (item && list) return make('for-each', { list, item }, {}, { do: body(node.body) })
-    }
-
-    if (node.type === 'ExpressionStatement') {
-      const expression = node.expression
-
-      if (expression?.type === 'AssignmentExpression') {
-        const variable = varName(expression.left)
-
-        if (variable && expression.operator === '=') {
-          if (expression.right?.type === 'ArrayExpression' && expression.right.elements.length === 0) {
-            return make('list-clear', { name: variable })
-          }
-          return make('set-var', { name: variable }, { value: value(expression.right) })
-        }
-
-        if (variable && expression.operator === '+=') {
-          return make('change-var', { name: variable }, { value: value(expression.right) })
-        }
-      }
-
-      const push = method(expression, 'push')
-      if (push) {
-        const list = listName(push.target)
-        if (list) return make('list-push', { name: list }, { value: value(push.args[0]!) })
-      }
-
-      const put = call(expression, 'put')
-      if (put) {
-        const list = str(put[0]!)
-        if (list) {
-          return make('list-put', { name: list }, { index: value(put[1]!), value: value(put[2]!) })
-        }
-      }
-
-      const printed = call(expression, 'print')
-      if (printed) return make('log', {}, { value: value(printed[0]!) })
-
-      const remember = call(expression, 'remember')
-      if (remember) {
-        const slot = str(remember[0]!)
-        if (slot) return make('remember', { slot }, { value: value(remember[1]!) })
-      }
-
-      const forget = call(expression, 'saveMemory')
-      if (forget && forget[0]?.type === 'ObjectExpression' && forget[0].properties.length === 0) {
-        return make('forget')
-      }
-    }
-
-    return null
-  }
-
-  const context: ParseContext = { text, make, value, body, call, method, str, num, thisProp, returned }
-
-  // ---------- หาเมธอดหลักของเกมนี้ ----------
-
-  const klass = findClass(ast)
-  if (!klass) return { ok: false, raw: 0, message: 'ไม่พบคลาส Agent ในโค้ด' }
-
-  const members: Node[] = klass.body?.body ?? []
-
-  // ต้องเจออย่างน้อยหนึ่งเมธอดที่ผูกกับหัวบล็อก ไม่งั้นแปลว่าโค้ดนี้ไม่ใช่ของเกมนี้
-  const matched = pack.target.methods.some((method) =>
-    members.some((member) => member.type === 'MethodDefinition' && member.key?.name === method.name)
-  )
-
-  if (!matched) {
-    const names = pack.target.methods.map((method) => `${method.name}()`).join(' หรือ ')
-    return { ok: false, raw: 0, message: `ไม่พบเมธอด ${names} ในคลาส Agent` }
-  }
-
-  // อ่านทุกเมธอดที่ผูกกับหัวบล็อก เมธอดไหนไม่มีในโค้ดก็ได้สคริปต์ว่าง
-  const scripts: Record<string, BlockNode[]> = {}
-
-  for (const method of pack.target.methods) {
-    const member = members.find(
-      (item) => item.type === 'MethodDefinition' && item.key?.name === method.name
-    )
-
-    scripts[method.hat.kind] = member
-      ? statements(method.unwrap(member.value?.body?.body ?? [], context))
-      : []
-  }
-
-  const program: BlockProgram = { name: findName(klass) ?? 'โปรแกรมของฉัน', scripts }
-
-  return {
-    ok: true,
-    program,
-    raw: rawCount,
-    message:
-      rawCount > 0
-        ? `แปลงเป็นบล็อกแล้ว — มี ${rawCount} ส่วนที่ยังไม่มีบล็อกรองรับ เก็บไว้เป็นบล็อก "โค้ดของฉัน"`
-        : 'แปลงเป็นบล็อกได้ครบทุกบรรทัด'
-  }
+  return { ctx, statements, raw: () => rawCount }
 }
 
 function findClass(ast: Node): Node | null {
@@ -460,7 +447,6 @@ function findClass(ast: Node): Node | null {
   return null
 }
 
-/** ชื่อโปรแกรมจากฟิลด์ name = '...' */
 function findName(klass: Node): string | null {
   for (const member of klass.body?.body ?? []) {
     if (member.type !== 'PropertyDefinition' || member.key?.name !== 'name') continue
@@ -470,4 +456,45 @@ function findName(klass: Node): string | null {
   }
 
   return null
+}
+
+const findMethod = (members: Node[], name: string): Node | undefined =>
+  members.find((item) => item.type === 'MethodDefinition' && item.key?.name === name)
+
+const summarize = (raw: number): string =>
+  raw > 0
+    ? `แปลงเป็นบล็อกแล้ว — มี ${raw} ส่วนที่ยังไม่มีบล็อกรองรับ เก็บไว้เป็นบล็อก "โค้ดของฉัน"`
+    : 'แปลงเป็นบล็อกได้ครบทุกบรรทัด'
+
+export function importProgram(code: string, pack: BlockPack): ImportResult {
+  let ast: Node
+
+  try {
+    ast = parseJs(code, { ecmaVersion: 'latest', locations: false, ranges: true }) as unknown as Node
+  } catch (error) {
+    return { ok: false, raw: 0, message: `โค้ดยังมีที่ผิดอยู่: ${(error as Error).message}` }
+  }
+
+  const klass = findClass(ast)
+  if (!klass) return { ok: false, raw: 0, message: 'ไม่พบคลาส Agent ในโค้ด' }
+
+  const members: Node[] = klass.body?.body ?? []
+
+  if (!pack.target.methods.some((method) => findMethod(members, method.name))) {
+    const names = pack.target.methods.map((method) => `${method.name}()`).join(' หรือ ')
+    return { ok: false, raw: 0, message: `ไม่พบเมธอด ${names} ในคลาส Agent` }
+  }
+
+  const { ctx, statements, raw } = createImporter(code, pack)
+
+  const scripts: Record<string, BlockNode[]> = {}
+
+  for (const method of pack.target.methods) {
+    const member = findMethod(members, method.name)
+    scripts[method.hat.kind] = member ? statements(method.unwrap(member.value?.body?.body ?? [], ctx)) : []
+  }
+
+  const program: BlockProgram = { name: findName(klass) ?? 'โปรแกรมของฉัน', scripts }
+
+  return { ok: true, program, raw: raw(), message: summarize(raw()) }
 }

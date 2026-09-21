@@ -1,8 +1,3 @@
-/**
- * Othello / Reversi engine — ฟังก์ชันบริสุทธิ์ล้วน ไม่ผูกกับ Vue หรือ DOM
- * ใช้ร่วมกันได้ทั้งฝั่ง UI และใน Web Worker ที่รันโค้ดของผู้เล่น
- */
-
 export const EMPTY = 0 as const
 export const BLACK = 1 as const
 export const WHITE = 2 as const
@@ -16,7 +11,7 @@ export type Board = Cell[][]
 export interface Move {
   row: number
   col: number
-  /** ตำแหน่งหมากของคู่ต่อสู้ที่จะถูกพลิกเมื่อลงตานี้ */
+
   flips: Array<[number, number]>
 }
 
@@ -50,7 +45,6 @@ export function createBoard(): Board {
   return board
 }
 
-/** หมากที่จะถูกพลิกถ้าลงตำแหน่งนี้ — คืน [] แปลว่าลงตานี้ไม่ได้ */
 export function getFlips(board: Board, row: number, col: number, player: Player): Array<[number, number]> {
   if (!inBounds(row, col) || board[row]![col] !== EMPTY) return []
 
@@ -95,7 +89,6 @@ export const findMove = (moves: Move[], row: number, col: number): Move | undefi
 export const hasValidMove = (board: Board, player: Player): boolean =>
   getValidMoves(board, player).length > 0
 
-/** ลงหมากแล้วคืนกระดานใหม่ (ไม่แก้ของเดิม) — ถ้าตานั้นผิดกติกาจะโยน error */
 export function applyMove(board: Board, move: { row: number; col: number }, player: Player): Board {
   const flips = getFlips(board, move.row, move.col, player)
   if (flips.length === 0) {
@@ -124,7 +117,6 @@ export function countDiscs(board: Board): DiscCount {
   return { black, white, empty }
 }
 
-/** ผลต่างจำนวนหมากจากมุมมองของผู้เล่นที่ระบุ */
 export function discDiff(board: Board, player: Player): number {
   const { black, white } = countDiscs(board)
   return player === BLACK ? black - white : white - black

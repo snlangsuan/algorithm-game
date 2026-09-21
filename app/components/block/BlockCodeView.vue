@@ -1,16 +1,16 @@
 <script setup lang="ts">
 const props = defineProps<{
   code: string
-  /** บรรทัดที่กำลังรัน (null = ยังไม่เริ่ม) */
+
   line: number | null
-  /** จำนวนครั้งที่รันแต่ละบรรทัด */
+
   lines: Record<number, number>
   running: boolean
-  /** แทรกตัวนับบรรทัดสำเร็จไหม */
+
   traced: boolean
-  /** แบบเต็มคอลัมน์: ตัวอักษรใหญ่ขึ้นและสูงตามจอ */
+
   tall?: boolean
-  /** ลดความสูงลงเพื่อเว้นที่ให้แผงคอนโซล */
+
   short?: boolean
 }>()
 
@@ -20,7 +20,7 @@ interface Row {
   number: number
   text: string
   count: number
-  /** ความยาวของแถบความร้อน (0..1) — ใช้สเกล log เพราะบรรทัดในลูปชนะขาดเสมอ */
+
   heat: number
 }
 
@@ -42,7 +42,6 @@ const rows = computed<Row[]>(() => {
 
 const hot = computed(() => Object.keys(props.lines).length > 0)
 
-/** เลื่อนบรรทัดที่กำลังรันให้อยู่กลางกรอบ โดยไม่ไปยุ่งกับ scroll ของทั้งหน้า */
 watch(
   () => props.line,
   async (line) => {
@@ -97,14 +96,12 @@ watch(
             row.number === line ? 'bg-primary-500/25' : ''
           ]"
         >
-          <!-- แถบความร้อน: ยิ่งบรรทัดถูกรันบ่อย แถบยิ่งยาว -->
           <span
             v-if="row.heat > 0"
             class="pointer-events-none absolute inset-y-0 left-0 bg-primary-400/12"
             :style="{ width: `${Math.max(row.heat * 100, 4)}%` }"
           />
 
-          <!-- เลขบรรทัดกับจำนวนครั้งอยู่ในคอลัมน์ที่ปักไว้ซ้าย เลื่อนดูโค้ดยาว ๆ แล้วยังเห็นครบ -->
           <span
             class="sticky left-0 z-10 flex shrink-0 select-none items-baseline gap-2 pr-3 tabular-nums"
             :class="[

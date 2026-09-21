@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { MAX_SIZE, MIN_SIZE, type MazeKind, type MazeOptions } from '~/game/maze/engine'
-import type { EditTool } from '~/composables/useMazeGame'
 
 const props = defineProps<{ options: MazeOptions; disabled?: boolean; solvable: boolean }>()
-
-const tool = defineModel<EditTool>('tool', { required: true })
 
 const emit = defineEmits<{
   option: [field: keyof MazeOptions, value: number | MazeKind]
@@ -18,18 +15,8 @@ const kinds: Array<{ value: MazeKind; label: string; hint: string }> = [
   { value: 'cavern', label: 'ถ้ำ', hint: 'โพรงกว้างที่เกลี่ยจนดูเป็นธรรมชาติ' }
 ]
 
-const tools: Array<{ value: EditTool; label: string }> = [
-  { value: 'none', label: 'ปิด' },
-  { value: 'wall', label: 'กำแพง' },
-  { value: 'mud', label: 'โคลน' },
-  { value: 'floor', label: 'ลบ' },
-  { value: 'start', label: 'จุดเริ่ม' },
-  { value: 'goal', label: 'ทางออก' }
-]
-
 const hint = computed(() => kinds.find((kind) => kind.value === props.options.kind)?.hint ?? '')
 
-/** แบบเขาวงกตใช้ความหนาแน่นของกำแพงจากอัลกอริทึมตัวเอง ไม่ต้องให้ปรับ */
 const usesDensity = computed(
   () => props.options.kind === 'obstacles' || props.options.kind === 'cavern'
 )
@@ -38,11 +25,14 @@ const percent = (value: number) => `${Math.round(value * 100)}%`
 </script>
 
 <template>
-  <div class="space-y-3">
+  <div class="@container space-y-3">
     <div class="rounded-xl bg-surface-muted p-3">
-      <p class="mb-2 text-xs font-semibold text-ink">รูปแบบแผนที่</p>
+      <p class="mb-2 flex items-center gap-1.5 text-xs font-semibold text-ink">
+        รูปแบบแผนที่
+        <UiInfo label="แผนที่แบบนี้เป็นยังไง" align="left">{{ hint }}</UiInfo>
+      </p>
 
-      <div class="grid grid-cols-2 gap-1.5">
+      <div class="grid grid-cols-2 gap-1.5 @sm:grid-cols-4">
         <button
           v-for="kind in kinds"
           :key="kind.value"
@@ -59,117 +49,94 @@ const percent = (value: number) => `${Math.round(value * 100)}%`
           {{ kind.label }}
         </button>
       </div>
-
-      <p class="mt-2 text-[11px] leading-relaxed text-ink-subtle">{{ hint }}</p>
-    </div>
-
-    <div class="space-y-3 rounded-xl bg-surface-muted p-3">
-      <label class="block">
-        <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
-          <span>กว้าง</span>
-          <span class="font-mono tabular-nums text-ink">{{ options.width }} ช่อง</span>
-        </span>
-        <input
-          type="range"
-          :min="MIN_SIZE"
-          :max="MAX_SIZE"
-          step="2"
-          :value="options.width"
-          :disabled="disabled"
-          class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
-          @change="emit('option', 'width', Number(($event.target as HTMLInputElement).value))"
-        />
-      </label>
-
-      <label class="block">
-        <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
-          <span>สูง</span>
-          <span class="font-mono tabular-nums text-ink">{{ options.height }} ช่อง</span>
-        </span>
-        <input
-          type="range"
-          :min="MIN_SIZE"
-          :max="MAX_SIZE"
-          step="2"
-          :value="options.height"
-          :disabled="disabled"
-          class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
-          @change="emit('option', 'height', Number(($event.target as HTMLInputElement).value))"
-        />
-      </label>
-
-      <label v-if="usesDensity" class="block">
-        <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
-          <span>ความหนาแน่นของกำแพง</span>
-          <span class="font-mono tabular-nums text-ink">{{ percent(options.density) }}</span>
-        </span>
-        <input
-          type="range"
-          min="5"
-          max="45"
-          step="1"
-          :value="Math.round(options.density * 100)"
-          :disabled="disabled"
-          class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
-          @change="emit('option', 'density', Number(($event.target as HTMLInputElement).value) / 100)"
-        />
-      </label>
-
-      <label class="block">
-        <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
-          <span>โคลน (ก้าวละ 5)</span>
-          <span class="font-mono tabular-nums text-ink">{{ percent(options.mud) }}</span>
-        </span>
-        <input
-          type="range"
-          min="0"
-          max="40"
-          step="1"
-          :value="Math.round(options.mud * 100)"
-          :disabled="disabled"
-          class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
-          @change="emit('option', 'mud', Number(($event.target as HTMLInputElement).value) / 100)"
-        />
-      </label>
-
-      <div class="flex items-center gap-2 pt-0.5">
-        <div class="min-w-0 flex-1">
-          <p class="text-[11px] text-ink-muted">เลข seed</p>
-          <p class="truncate font-mono text-xs tabular-nums text-ink">{{ options.seed }}</p>
-        </div>
-
-        <UiButton size="sm" variant="outline" :disabled="disabled" @click="emit('shuffle')">
-          สุ่มใหม่
-        </UiButton>
-      </div>
-
-      <p class="text-[11px] leading-relaxed text-ink-subtle">seed เดิมได้แผนที่เดิมเสมอ ใช้เทียบอัลกอริทึมบนสนามเดียวกันได้</p>
     </div>
 
     <div class="rounded-xl bg-surface-muted p-3">
-      <p class="mb-2 text-xs font-semibold text-ink">วาดแผนที่เอง</p>
+      <div class="grid gap-3 @sm:grid-cols-2 @sm:gap-x-4">
+        <label class="block">
+          <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
+            <span>กว้าง</span>
+            <span class="font-mono tabular-nums text-ink">{{ options.width }} ช่อง</span>
+          </span>
+          <input
+            type="range"
+            :min="MIN_SIZE"
+            :max="MAX_SIZE"
+            step="2"
+            :value="options.width"
+            :disabled="disabled"
+            class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
+            @change="emit('option', 'width', Number(($event.target as HTMLInputElement).value))"
+          />
+        </label>
 
-      <div class="flex flex-wrap gap-1.5">
-        <button
-          v-for="item in tools"
-          :key="item.value"
-          type="button"
-          :disabled="disabled"
-          class="rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50"
-          :class="
-            tool === item.value
-              ? 'bg-primary-600 text-white shadow-soft'
-              : 'bg-surface text-ink-muted ring-1 ring-line hover:text-primary-700'
-          "
-          @click="tool = item.value"
-        >
-          {{ item.label }}
-        </button>
+        <label class="block">
+          <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
+            <span>สูง</span>
+            <span class="font-mono tabular-nums text-ink">{{ options.height }} ช่อง</span>
+          </span>
+          <input
+            type="range"
+            :min="MIN_SIZE"
+            :max="MAX_SIZE"
+            step="2"
+            :value="options.height"
+            :disabled="disabled"
+            class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
+            @change="emit('option', 'height', Number(($event.target as HTMLInputElement).value))"
+          />
+        </label>
+
+        <label v-if="usesDensity" class="block">
+          <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
+            <span>ความหนาแน่นของกำแพง</span>
+            <span class="font-mono tabular-nums text-ink">{{ percent(options.density) }}</span>
+          </span>
+          <input
+            type="range"
+            min="5"
+            max="45"
+            step="1"
+            :value="Math.round(options.density * 100)"
+            :disabled="disabled"
+            class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
+            @change="emit('option', 'density', Number(($event.target as HTMLInputElement).value) / 100)"
+          />
+        </label>
+
+        <label class="block">
+          <span class="mb-1 flex items-baseline justify-between text-[11px] text-ink-muted">
+            <span>โคลน (ก้าวละ 5)</span>
+            <span class="font-mono tabular-nums text-ink">{{ percent(options.mud) }}</span>
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="40"
+            step="1"
+            :value="Math.round(options.mud * 100)"
+            :disabled="disabled"
+            class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-primary-600 disabled:opacity-50"
+            @change="emit('option', 'mud', Number(($event.target as HTMLInputElement).value) / 100)"
+          />
+        </label>
+
+        <div class="flex items-center gap-2">
+          <div class="min-w-0 flex-1">
+            <p class="flex items-center gap-1.5 text-[11px] text-ink-muted">
+              เลข seed
+              <UiInfo label="เลข seed มีไว้ทำไม" align="left">
+                seed เดิมได้แผนที่เดิมเสมอ ใช้เทียบอัลกอริทึมบนสนามเดียวกันได้
+              </UiInfo>
+            </p>
+            <p class="truncate font-mono text-xs tabular-nums text-ink">{{ options.seed }}</p>
+          </div>
+
+          <UiButton size="sm" variant="outline" :disabled="disabled" @click="emit('shuffle')">
+            สุ่มใหม่
+          </UiButton>
+        </div>
       </div>
-
-      <p class="mt-2 text-[11px] leading-relaxed text-ink-subtle">
-        เลือกเครื่องมือแล้วคลิกหรือลากบนแผนที่ได้เลย
-      </p>
     </div>
 
     <p

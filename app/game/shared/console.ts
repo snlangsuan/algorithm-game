@@ -1,15 +1,9 @@
-/**
- * ตัวเก็บข้อความที่โปรแกรมของผู้เล่นพิมพ์ออกมา (บล็อก "พิมพ์ลงคอนโซล" หรือ console.log ในโค้ด)
- * worker ของทุกเกมใช้ตัวเดียวกัน แล้วส่งกลับไปโชว์ในแผงคอนโซลของหน้าเกม
- */
-
 export interface LogLine {
   text: string
-  /** บรรทัดของโค้ดที่พิมพ์ออกมา (0 = ไม่ทราบ) */
+
   line: number
 }
 
-/** กันโปรแกรมที่พิมพ์ในลูปจนท่วม — เก็บต่อหนึ่งรอบการคิดเท่านี้ */
 const LIMIT = 200
 
 const MAX_LENGTH = 300
@@ -17,7 +11,6 @@ const MAX_LENGTH = 300
 let lines: LogLine[] = []
 let dropped = 0
 
-/** แปลงค่าอะไรก็ได้ให้เป็นข้อความสั้น ๆ ที่อ่านรู้เรื่อง */
 export function describe(value: unknown): string {
   if (typeof value === 'string') return value
   if (value === null) return 'null'
@@ -46,7 +39,6 @@ export function pushLog(value: unknown, line: number): void {
   lines.push({ text: describe(value), line })
 }
 
-/** ดึงข้อความที่สะสมไว้ แล้วล้างตัวเก็บ */
 export function takeLog(): LogLine[] {
   if (dropped > 0) lines.push({ text: `… ตัดอีก ${dropped} บรรทัดทิ้ง (พิมพ์เยอะเกินไป)`, line: 0 })
 
@@ -56,7 +48,6 @@ export function takeLog(): LogLine[] {
   return out
 }
 
-/** ต่อสาย console.log ของผู้เล่นให้มาลงแผงเดียวกัน */
 export function captureConsole(ctx: { console: Console }, lineOf: () => number): void {
   const native = ctx.console
 

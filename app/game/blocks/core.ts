@@ -1,12 +1,6 @@
 import { RAW_STATEMENT, RAW_VALUE, quote, register, type BlockSpec, type SelectOption } from './types'
 
-/** บล็อกที่ใช้ได้เฉพาะเกมที่มีความจำข้ามเกม */
 const MEMORY_KINDS = new Set(['remember', 'recall', 'forget'])
-
-/**
- * บล็อกชุดกลาง — เงื่อนไข ทำซ้ำ ตรรกะ ตัวเลข ตัวแปร
- * ทุกเกมได้ชุดนี้ไปใช้เหมือนกันหมด ต่างกันแค่บล็อกเฉพาะเกมที่เติมเข้าไป
- */
 
 export const VARIABLES: SelectOption[] = [
   { value: 'a', label: 'ก' },
@@ -23,7 +17,6 @@ const COMPARISONS: SelectOption[] = [
   { value: 'gt', label: 'มากกว่า' }
 ]
 
-/** ฟังก์ชันคณิตที่ใช้บ่อย รวมไว้ในบล็อกเดียวแล้วเลือกจากดรอปดาวน์ */
 const FUNCTIONS: SelectOption[] = [
   { value: 'mod', label: 'เศษจากการหาร' },
   { value: 'min', label: 'ค่าที่น้อยกว่า' },
@@ -220,7 +213,6 @@ export const CORE_BLOCKS: BlockSpec[] = [
     }
   },
 
-  // ----- ตรรกะ -----
   {
     kind: 'not',
     shape: 'value',
@@ -270,7 +262,6 @@ export const CORE_BLOCKS: BlockSpec[] = [
     emit: (node, ctx) => (ctx.field(node, 'value') === 'true' ? 'true' : 'false')
   },
 
-  // ----- ตัวเลขและตัวแปร -----
   {
     kind: 'number',
     shape: 'value',
@@ -302,7 +293,7 @@ export const CORE_BLOCKS: BlockSpec[] = [
       { type: 'text', text: 'ต่อกับ' },
       { type: 'input', name: 'right', placeholder: 'ค่า' }
     ],
-    // ใช้ template literal ไม่ใช่ + เพราะตอนอ่านโค้ดกลับจะได้แยกออกจากบล็อก "คำนวณ" (บวก)
+
     emit: (node, ctx) =>
       `\`\${${ctx.value(node, 'left', "''")}}\${${ctx.value(node, 'right', "''")}}\``
   },
@@ -577,15 +568,10 @@ export const CORE_BLOCKS: BlockSpec[] = [
   }
 ]
 
-/** บล็อกกลางที่เกมนั้นใช้ได้ — เกมที่มีความจำข้ามเกมจะได้บล็อก "จำไว้" เพิ่มมาด้วย */
 export function coreBlocksOf(memory: boolean): BlockSpec[] {
   return memory ? CORE_BLOCKS : CORE_BLOCKS.filter((block) => !MEMORY_KINDS.has(block.kind))
 }
 
-/**
- * ตัวช่วยกลางที่ทุกเกมได้ไปเหมือนกัน — ทำให้บล็อกลิสต์ใช้งานได้
- * โดยไม่ต้องตั้งค่าตัวแปรให้เป็นลิสต์ก่อน
- */
 export const CORE_HELPERS = `
   // ---------- ตัวช่วยกลาง ----------
 

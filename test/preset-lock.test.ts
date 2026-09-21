@@ -1,24 +1,16 @@
-/**
- * ตัวอย่างสำเร็จรูปแก้ไม่ได้ ต้องกด "คัดลอกไปแก้" ก่อน
- *
- * ถ้ากติกานี้พัง เด็กจะแก้ตัวอย่างจนพังแล้วหาทางกลับไม่เจอ
- * และตัวช่วยอย่าง "ลองดูตัวอย่าง" ก็จะเชื่อถือไม่ได้อีก
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { useBlockProgram } from '~/composables/useBlockProgram'
 import { useBlockDrag } from '~/composables/useBlockEditor'
 import { createBlock } from '~/game/blocks/program'
-import { MAZE_PACK } from '~/game/maze/blocks/pack'
-import { DEFAULT_PRESET_ID } from '~/game/maze/blocks/pack'
+import { DEFAULT_PRESET_ID, MAZE_PACK } from '~/game/maze/blocks/pack'
 import { countBlocks } from './helpers'
 
 const setup = () => useBlockProgram(MAZE_PACK, DEFAULT_PRESET_ID)
 
 const hat = 'maze.on-turn'
 
-/** จำลองว่ากำลังลากบล็อกจากกล่องเครื่องมืออยู่ — สถานะนี้ใช้ร่วมกันทั้งหน้า */
 function holdFromPalette(kind: string) {
   const { start, end } = useBlockDrag()
   start({ dataTransfer: null } as unknown as DragEvent, { source: 'palette', kind, shape: 'statement' })
@@ -110,7 +102,7 @@ test('เลือกตัวอย่างอื่นแล้วกลั�
 
   assert.equal(blocks.locked.value, true)
   assert.equal(blocks.presetId.value, other.id)
-  // ชื่อโปรแกรมมาจาก build() ไม่ใช่ชื่อที่โชว์ในดรอปดาวน์ จึงเทียบกับของที่ตัวอย่างสร้างเอง
+
   assert.equal(blocks.program.name, other.build().name)
 })
 
@@ -120,4 +112,58 @@ test('โปรแกรมที่อ่านกลับมาจากโ�
 
   blocks.replaceProgram({ name: 'จากโค้ด', scripts: { [hat]: [createBlock('maze.walk')] } })
   assert.equal(blocks.locked.value, false, 'สลับจากโหมดโค้ดกลับมาแล้วต้องแก้ได้ทันที')
+})
+
+test('โปรแกรมใหม่ว่างเปล่า แก้ได้ทันที และเข้าไปอยู่ในคลังของฉัน', () => {
+  const blocks = setup()
+  const before = blocks.library.length
+
+  blocks.newProgram()
+
+  assert.equal(blocks.locked.value, false)
+  assert.equal(blocks.presetId.value, '')
+  assert.equal(countBlocks(blocks.program), 0)
+  assert.equal(blocks.library.length, before + 1)
+  assert.ok(blocks.program.libraryId)
+  assert.equal(blocks.programKey.value, `mine:${blocks.program.libraryId}`)
+})
+
+test('แก้โปรแกรมของฉันแล้วบันทึกลงคลังเอง — สลับไปดูตัวอย่างแล้วกลับมา ของยังอยู่', () => {
+  const blocks = setup()
+  blocks.newProgram()
+  const id = blocks.program.libraryId!
+
+  const release = holdFromPalette('maze.walk')
+  blocks.api.dropStatement({ parent: null, name: hat, index: 0 })
+  release()
+  blocks.rename('ของฉันเอง')
+
+  blocks.usePreset(DEFAULT_PRESET_ID)
+  assert.equal(blocks.locked.value, true)
+  assert.equal(blocks.program.libraryId, undefined)
+
+  blocks.usePreset(`mine:${id}`)
+  assert.equal(blocks.locked.value, false, 'โปรแกรมของฉันต้องแก้ต่อได้เลย')
+  assert.equal(blocks.program.name, 'ของฉันเอง')
+  assert.equal(countBlocks(blocks.program), 1)
+})
+
+test('คัดลอกตัวอย่างไปแก้ ก็เข้าไปอยู่ในคลังด้วย และลบทิ้งได้', () => {
+  const blocks = setup()
+  const before = blocks.library.length
+
+  blocks.cloneForEditing()
+  const id = blocks.program.libraryId!
+  assert.equal(blocks.library.length, before + 1)
+  assert.ok(blocks.library.some((entry) => entry.id === id))
+
+  const removed: string[] = []
+  const withHook = useBlockProgram(MAZE_PACK, DEFAULT_PRESET_ID, undefined, { onRemove: (key) => removed.push(key) })
+  withHook.usePreset(`mine:${id}`)
+  withHook.removeProgram()
+
+  assert.ok(!withHook.library.some((entry) => entry.id === id), 'ต้องหายจากคลัง')
+  assert.deepEqual(removed, [`mine:${id}`], 'เกมต้องได้รู้ว่าโปรแกรมไหนถูกลบ จะได้ล้างความจำตาม')
+  assert.equal(withHook.presetId.value, DEFAULT_PRESET_ID, 'ลบตัวที่เปิดอยู่ ต้องกลับไปที่ตัวอย่างตั้งต้น')
+  assert.equal(withHook.locked.value, true)
 })

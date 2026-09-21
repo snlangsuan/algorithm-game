@@ -12,7 +12,6 @@ const game = useMazeGame()
 const blockEditorOpen = ref(false)
 const starting = ref(false)
 
-/** ปุ่มแก้ที่หัวโปรแกรม */
 function edit() {
   blockEditorOpen.value = true
 }
@@ -30,7 +29,6 @@ async function run() {
 <template>
   <NuxtLayout name="game" title="เขาวงกต">
     <GameStage>
-      <!-- สนามเล่น -->
       <template #stage>
         <MazeGrid
           :maze="game.maze.value"
@@ -72,9 +70,16 @@ async function run() {
         >
           {{ game.notice.value }}
         </p>
+
+        <MazeMapPanel
+          :options="game.options"
+          :disabled="game.busy.value"
+          :solvable="game.best.value.solvable"
+          @option="game.setOption"
+          @shuffle="game.shuffle"
+        />
       </template>
 
-      <!-- โปรแกรมของผู้เล่น -->
       <template #program>
         <BlockWorkspace
           tall
@@ -95,7 +100,6 @@ async function run() {
         />
       </template>
 
-      <!-- แผงควบคุม -->
       <template #panel>
         <GamePanel>
           <template #summary>
@@ -109,7 +113,6 @@ async function run() {
           </template>
 
           <template #default>
-            <!-- เลือกอัลกอริทึมอยู่ตรงนี้ ที่เดียวกับตั้งค่าแผนที่ -->
             <BlockAlgorithmPicker
               :pack="game.blocks.pack"
               :program="game.blocks.program"
@@ -119,19 +122,11 @@ async function run() {
               @preset="game.blocks.usePreset"
             />
 
-            <MazeMapPanel
-              v-model:tool="game.tool.value"
-              :options="game.options"
-              :disabled="game.busy.value"
-              :solvable="game.best.value.solvable"
-              @option="game.setOption"
-              @shuffle="game.shuffle"
-            />
+            <MazeDrawTools v-model:tool="game.tool.value" :disabled="game.busy.value" />
           </template>
         </GamePanel>
       </template>
 
-      <!-- จอเล็ก: โปรแกรมอยู่ใต้แผงควบคุมแทนคอลัมน์กลางที่ถูกซ่อน -->
       <template #panel-extra>
         <BlockWorkspace
           class="mt-3 xl:hidden"
@@ -164,6 +159,9 @@ async function run() {
       @preset="game.blocks.usePreset"
       @rename="game.blocks.rename"
       @clone="game.blocks.cloneForEditing"
+      @create="game.blocks.newProgram"
+      @load="game.blocks.loadProgram"
+      @remove="game.blocks.removeProgram()"
     />
 
   </NuxtLayout>

@@ -19,10 +19,8 @@ useSeoMeta({
 
 const demo = computed(() => demoFor(slug.value, topic.value!.preset))
 
-/** ภาพจากเอนจินจริง — สร้างครั้งเดียวแล้วแคชไว้ใน algorithm-figures.ts */
 const figure = computed(() => figureFor(slug.value))
 
-/** หัวข้อถัดไปในลิสต์ ไว้ให้อ่านต่อโดยไม่ต้องย้อนกลับ */
 const next = computed(() => {
   const at = TOPICS.findIndex((item) => item.slug === slug.value)
   return TOPICS[(at + 1) % TOPICS.length]
@@ -58,7 +56,6 @@ const next = computed(() => {
 
       <div class="mt-12 grid gap-12 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-14">
         <div class="space-y-12">
-          <!-- ภาพมาก่อนคำอธิบาย เพราะจุดประสงค์คือให้เห็นก่อนว่าหน้าตามันเป็นยังไง -->
           <section v-if="figure">
             <h2 class="text-lg font-semibold tracking-tight text-ink">หน้าตาในเกมจริง</h2>
             <LearnFigure class="mt-4" :figure="figure" />
@@ -76,7 +73,6 @@ const next = computed(() => {
             </ol>
           </section>
 
-          <!-- อธิบายด้วยบล็อก ภาษาภาพเดียวกับที่ใช้เล่นจริง -->
           <section v-if="demo">
             <h2 class="text-lg font-semibold tracking-tight text-ink">เขียนเป็นบล็อกแล้วหน้าตาแบบนี้</h2>
             <p class="mt-2 max-w-2xl text-sm leading-relaxed text-ink-muted">{{ demo.note }}</p>
@@ -110,7 +106,6 @@ const next = computed(() => {
             </ul>
           </section>
 
-          <!-- เหตุผลเบื้องหลัง แยกจากที่มา เพราะเป็นคนละคำถาม: ใครคิด กับ ทำไมมันเวิร์ก -->
           <section>
             <h2 class="text-lg font-semibold tracking-tight text-ink">ทำไมมันถึงได้ผล</h2>
             <div class="mt-4 max-w-2xl space-y-3.5">
@@ -163,7 +158,7 @@ const next = computed(() => {
               class="mt-4"
               size="sm"
               variant="outline"
-              :to="topic.preset.game === 'maze' ? '/maze' : '/othello'"
+              :to="`/${topic.preset.game}`"
             >
               ไปลองเล่น
             </UiButton>

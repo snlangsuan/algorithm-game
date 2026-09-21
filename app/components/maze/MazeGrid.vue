@@ -4,21 +4,21 @@ import { MUD, WALL, type Maze, type Point } from '~/game/maze/engine'
 const props = withDefaults(
   defineProps<{
     maze: Maze
-    /** ช่องที่โค้ดสำรวจ เรียงตามลำดับ */
+
     explored: Point[]
-    /** ระบายไปแล้วกี่ช่อง */
+
     exploredShown: number
-    /** เส้นทางเต็ม index 0 คือจุดเริ่ม */
+
     path: Point[]
-    /** เดินไปถึง index ไหนแล้ว */
+
     walkShown: number
-    /** เฉลยของแผนที่ */
+
     optimal?: Point[]
     showOptimal?: boolean
-    /** วาดเฉลยทับเส้นทางที่เดิน — ในหน้าความรู้สองเส้นมักซ้อนกันจนเขียวหายไปใต้ม่วง */
+
     optimalOnTop?: boolean
     editable?: boolean
-    /** ความสูงสูงสุดของภาพ (px) — 0 = คิดจากความสูงของหน้าจอให้เอง */
+
     maxHeight?: number
   }>(),
   { optimal: () => [], showOptimal: false, optimalOnTop: false, editable: false, maxHeight: 0 }
@@ -43,7 +43,6 @@ const COLORS = {
 const host = ref<HTMLDivElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 
-/** ชั้นสีของการสำรวจ วาดเพิ่มทีละช่องแทนการวาดใหม่ทั้งหมดทุกเฟรม */
 let layer: HTMLCanvasElement | null = null
 let layerSource: Point[] | null = null
 let layerDrawn = 0
@@ -57,7 +56,6 @@ function measure() {
   const available = element.clientWidth
   if (available <= 0) return
 
-  // จำกัดทั้งความกว้างและความสูง แผนที่ทรงสูงจะได้ไม่ล้นจอ
   const limit = props.maxHeight > 0 ? props.maxHeight : Math.max(240, window.innerHeight - 270)
   const fit = Math.min(available / props.maze.width, limit / props.maze.height)
   const cell = Math.max(2, Math.floor(fit * 2) / 2)
@@ -82,7 +80,6 @@ const mix = (ratio: number): string => {
   return `rgb(${r} ${g} ${b})`
 }
 
-/** วาดช่องที่สำรวจเพิ่มลงชั้นสี — ล้างชั้นใหม่เมื่อมีการรันรอบใหม่ */
 function paintExplored() {
   const { cell, width, height, dpr } = size.value
   if (cell <= 0) return null
@@ -118,7 +115,6 @@ function paintExplored() {
   return layer
 }
 
-/** ลากเส้นทางเป็นเส้นต่อเนื่อง อ่านง่ายกว่าระบายทีละช่อง */
 function stroke(
   context: CanvasRenderingContext2D,
   cells: Point[],
@@ -165,32 +161,18 @@ function marker(context: CanvasRenderingContext2D, point: Point, cell: number, c
   }
 }
 
-function draw() {
-  const element = canvas.value
-  const { cell, width, height, dpr } = size.value
-  if (!element || cell <= 0) return
-
+function resizeCanvas(element: HTMLCanvasElement, width: number, height: number, dpr: number) {
   const pixelWidth = Math.round(width * dpr)
   const pixelHeight = Math.round(height * dpr)
+  if (element.width === pixelWidth && element.height === pixelHeight) return
 
-  // ตั้งขนาดเฉพาะตอนที่เปลี่ยนจริง เพราะการเขียน .width ล้างภาพในแคนวาสทิ้ง
-  if (element.width !== pixelWidth || element.height !== pixelHeight) {
-    element.width = pixelWidth
-    element.height = pixelHeight
-    element.style.width = `${width}px`
-    element.style.height = `${height}px`
-  }
+  element.width = pixelWidth
+  element.height = pixelHeight
+  element.style.width = `${width}px`
+  element.style.height = `${height}px`
+}
 
-  const context = element.getContext('2d')
-  if (!context) return
-
-  context.setTransform(dpr, 0, 0, dpr, 0, 0)
-  context.clearRect(0, 0, width, height)
-
-  // พื้นและกำแพง
-  context.fillStyle = COLORS.floor
-  context.fillRect(0, 0, width, height)
-
+function drawTerrain(context: CanvasRenderingContext2D, cell: number): Point[] {
   const grid = props.maze.grid
   const mud: Point[] = []
 
@@ -211,38 +193,53 @@ function draw() {
     }
   }
 
-  // ชั้นสีของการสำรวจ (ไม่ทับกำแพง)
+  return mud
+}
+
+function drawExplored(
+  context: CanvasRenderingContext2D,
+  cell: number,
+  width: number,
+  height: number,
+  mud: Point[]
+) {
   const shade = paintExplored()
-  if (shade && props.exploredShown > 0) {
-    context.globalAlpha = 0.85
-    context.drawImage(shade, 0, 0, width, height)
-    context.globalAlpha = 1
+  if (!shade || props.exploredShown <= 0) return
 
-    // ย้อมโคลนกลับเข้าไป ไม่งั้นสีของการสำรวจจะกลบจนดูไม่ออกว่าช่องไหนแพง
-    context.globalAlpha = 0.55
-    context.fillStyle = COLORS.mud
-    for (const point of mud) context.fillRect(point.col * cell, point.row * cell, cell, cell)
-    context.globalAlpha = 1
+  context.globalAlpha = 0.85
+  context.drawImage(shade, 0, 0, width, height)
+
+  context.globalAlpha = 0.55
+  context.fillStyle = COLORS.mud
+  for (const point of mud) context.fillRect(point.col * cell, point.row * cell, cell, cell)
+
+  context.globalAlpha = 1
+}
+
+function drawLines(context: CanvasRenderingContext2D, cell: number, width: number, height: number) {
+  if (cell < 11) return
+
+  context.strokeStyle = COLORS.line
+  context.lineWidth = 1
+
+  context.beginPath()
+
+  for (let col = 1; col < props.maze.width; col++) {
+    context.moveTo(col * cell, 0)
+    context.lineTo(col * cell, height)
   }
 
-  // เส้นตารางบาง ๆ เฉพาะตอนช่องใหญ่พอ
-  if (cell >= 11) {
-    context.strokeStyle = COLORS.line
-    context.lineWidth = 1
-
-    context.beginPath()
-    for (let col = 1; col < props.maze.width; col++) {
-      context.moveTo(col * cell, 0)
-      context.lineTo(col * cell, height)
-    }
-    for (let row = 1; row < props.maze.height; row++) {
-      context.moveTo(0, row * cell)
-      context.lineTo(width, row * cell)
-    }
-    context.stroke()
+  for (let row = 1; row < props.maze.height; row++) {
+    context.moveTo(0, row * cell)
+    context.lineTo(width, row * cell)
   }
 
+  context.stroke()
+}
+
+function drawRoutes(context: CanvasRenderingContext2D, cell: number): Point[] {
   const solution = props.showOptimal && props.optimal.length > 1
+
   if (solution && !props.optimalOnTop) {
     stroke(context, props.optimal, cell, COLORS.optimal, 0.16, true)
   }
@@ -254,26 +251,52 @@ function draw() {
     stroke(context, props.optimal, cell, COLORS.optimal, 0.16, true)
   }
 
+  return walked
+}
+
+function drawAgent(context: CanvasRenderingContext2D, cell: number, walked: Point[]) {
+  const head = walked[walked.length - 1]
+  if (!head || walked.length <= 1) return
+
+  const x = head.col * cell + cell / 2
+  const y = head.row * cell + cell / 2
+
+  context.beginPath()
+  context.arc(x, y, cell * 0.3, 0, Math.PI * 2)
+  context.fillStyle = COLORS.agent
+  context.fill()
+  context.lineWidth = Math.max(1, cell * 0.1)
+  context.strokeStyle = '#ffffff'
+  context.stroke()
+}
+
+function draw() {
+  const element = canvas.value
+  const { cell, width, height, dpr } = size.value
+  if (!element || cell <= 0) return
+
+  resizeCanvas(element, width, height, dpr)
+
+  const context = element.getContext('2d')
+  if (!context) return
+
+  context.setTransform(dpr, 0, 0, dpr, 0, 0)
+  context.clearRect(0, 0, width, height)
+
+  context.fillStyle = COLORS.floor
+  context.fillRect(0, 0, width, height)
+
+  const mud = drawTerrain(context, cell)
+  drawExplored(context, cell, width, height, mud)
+  drawLines(context, cell, width, height)
+
+  const walked = drawRoutes(context, cell)
+
   marker(context, props.maze.start, cell, COLORS.start, false)
   marker(context, props.maze.goal, cell, COLORS.goal, true)
 
-  // ตำแหน่งปัจจุบันของ agent
-  const head = walked[walked.length - 1]
-  if (head && walked.length > 1) {
-    const x = head.col * cell + cell / 2
-    const y = head.row * cell + cell / 2
-
-    context.beginPath()
-    context.arc(x, y, cell * 0.3, 0, Math.PI * 2)
-    context.fillStyle = COLORS.agent
-    context.fill()
-    context.lineWidth = Math.max(1, cell * 0.1)
-    context.strokeStyle = '#ffffff'
-    context.stroke()
-  }
+  drawAgent(context, cell, walked)
 }
-
-// ---------- การแก้แผนที่ด้วยเมาส์ ----------
 
 let painting = false
 let lastCell = ''
@@ -343,7 +366,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', refresh)
 })
 
-// สร้างแผนที่ใหม่ = ขนาดช่องอาจเปลี่ยน ต้องวัดใหม่ก่อนวาด
 watch(() => props.maze, refresh)
 
 watch(

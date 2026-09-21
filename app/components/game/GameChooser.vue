@@ -1,7 +1,6 @@
 <script setup lang="ts">
+import { GAMES } from '~/data/games'
 import type { BlockPack } from '~/game/blocks/pack'
-import { MAZE_PACK } from '~/game/maze/blocks/pack'
-import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
 /**
  * รายการเกม — ใช้ทั้งหน้าแรกและหน้าเลือกเกม
@@ -9,41 +8,20 @@ import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
  */
 defineProps<{ compact?: boolean }>()
 
-interface Entry {
-  to: string
-  name: string
-  what: string
-  detail: string
-  thumb: 'maze' | 'othello'
-  pack: BlockPack
-}
+const entries = GAMES
 
-const entries: Entry[] = [
-  {
-    to: '/maze',
-    name: 'เขาวงกต',
-    what: 'ต่อบล็อกให้หุ่นหาทางออกเอง',
-    detail:
-      'สุ่มแผนที่ได้ตั้งแต่เล็กจนใหญ่ วางกำแพงกับโคลนเองก็ได้ แล้วดูว่าวิธีที่คิดไว้พาหุ่นถึงทางออกกี่ก้าว เทียบกับทางที่สั้นที่สุด',
-    thumb: 'maze',
-    pack: MAZE_PACK
-  },
-  {
-    to: '/othello',
-    name: 'Othello 8×8',
-    what: 'เขียนวิธีคิดให้บอทลงหมากแข่งกัน',
-    detail:
-      'เล่นเองกับเพื่อน หรือปล่อยบอทสองตัวแข่งกัน บอทที่ใช้บล็อกความจำจะจำผลเกมก่อนไว้ ซ้อมหลายเกมแล้วเก่งขึ้นจริง',
-    thumb: 'othello',
-    pack: OTHELLO_PACK
-  }
-]
+const blocksIn = (packs: BlockPack[]) =>
+  packs.reduce(
+    (sum, pack) => sum + pack.palette.reduce((count, group) => count + group.kinds.length, 0),
+    0
+  )
 
-const blocksIn = (pack: BlockPack) =>
-  pack.palette.reduce((sum, group) => sum + group.kinds.length, 0)
+const presetsIn = (packs: BlockPack[]) =>
+  packs.reduce((sum, pack) => sum + pack.presets.length, 0)
 
 /** ชื่อบล็อกหัวของเกม — บอกตรง ๆ ว่าต่อบล็อกได้ตรงจังหวะไหนบ้าง ชัดกว่าบอกแค่จำนวน */
-const hatNames = (pack: BlockPack) => pack.hats.map((hat) => hat.title).join(' · ')
+const hatNames = (packs: BlockPack[]) =>
+  packs.flatMap((pack) => pack.hats.map((hat) => hat.title)).join(' · ')
 </script>
 
 <template>
@@ -57,7 +35,6 @@ const hatNames = (pack: BlockPack) => pack.hats.map((hat) => hat.title).join(' �
           {{ String(index + 1).padStart(2, '0') }}
         </span>
 
-        <!-- ภาพย่อวาดสดจากเอนจินของเกมนั้น ไม่ใช่ไฟล์รูป — กติกาเปลี่ยนเมื่อไรภาพเปลี่ยนตาม -->
         <GameThumb
           :kind="entry.thumb"
           class="aspect-[4/3] w-full max-w-[16rem] transition-shadow group-hover:shadow-lift sm:max-w-none"
@@ -74,10 +51,10 @@ const hatNames = (pack: BlockPack) => pack.hats.map((hat) => hat.title).join(' �
           </p>
 
           <p class="mt-3 font-mono text-[11px] tabular-nums text-ink-subtle">
-            {{ blocksIn(entry.pack) }} บล็อก · {{ entry.pack.presets.length }} อัลกอริทึมสำเร็จรูป
+            {{ blocksIn(entry.packs) }} บล็อก · {{ presetsIn(entry.packs) }} อัลกอริทึมสำเร็จรูป
           </p>
           <p class="mt-1 font-mono text-[11px] text-ink-subtle">
-            ต่อบล็อกได้ที่: {{ hatNames(entry.pack) }}
+            ต่อบล็อกได้ที่: {{ hatNames(entry.packs) }}
           </p>
         </div>
 

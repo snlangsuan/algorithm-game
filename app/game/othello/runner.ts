@@ -4,17 +4,20 @@ import type { LogLine } from '../shared/console'
 import type { TraceSummary, TraceTick, WorkerRequest, WorkerResponse } from './protocol'
 
 export interface RunnerOptions {
-  /** เวลาสูงสุดต่อหนึ่งตา (ms) — เกินแล้วจะฆ่า worker ทิ้ง */
+
   timeoutMs?: number
-  /** เรียกเป็นระยะระหว่างที่ agent คิด บอกว่ากำลังรันเมธอดไหน */
+
   onTrace?: (tick: TraceTick) => void
-  /** เรียกครั้งเดียวหลัง agent คิดจบ พร้อมสรุปจำนวนครั้งที่เรียกแต่ละเมธอด */
+
   onSummary?: (summary: TraceSummary) => void
-  /** ความจำจากเกมก่อนที่จะส่งให้ agent ตอนเริ่ม */
+
   memory?: AgentMemory | null
-  /** เรียกทุกครั้งที่ agent สั่ง saveMemory() */
+
+  /** ตรึงความจำไว้ — ใช้กับฝั่งที่ลงเล่นเป็นคู่ซ้อมเฉย ๆ ไม่ได้กำลังฝึก */
+  frozen?: boolean
+
   onMemory?: (data: AgentMemory) => void
-  /** เรียกเมื่อโปรแกรมพิมพ์ข้อความออกคอนโซล */
+
   onLog?: (lines: LogLine[]) => void
 }
 
@@ -24,10 +27,6 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>
 }
 
-/**
- * ตัวรันโค้ดของผู้เล่นใน Web Worker
- * แยกสโคปออกจากหน้าเว็บ และตัดจบได้ถ้าโค้ดวนไม่รู้จบ
- */
 export class AgentRunner {
   private worker: Worker | null = null
   private pending = new Map<number, Pending>()
@@ -40,6 +39,7 @@ export class AgentRunner {
   private readonly onMemory?: (data: AgentMemory) => void
   private readonly onLog?: (lines: LogLine[]) => void
   private readonly memory: AgentMemory | null
+  private readonly frozen: boolean
 
   constructor(private readonly code: string, options: RunnerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 3000
@@ -48,6 +48,7 @@ export class AgentRunner {
     this.onMemory = options.onMemory
     this.onLog = options.onLog
     this.memory = options.memory ?? null
+    this.frozen = options.frozen ?? false
   }
 
   get name(): string {
@@ -58,12 +59,10 @@ export class AgentRunner {
     return this.worker !== null
   }
 
-  /** แทรกตัวนับบรรทัดสำเร็จไหม — หน้าจอใช้ตัดสินว่าจะไฮไลต์บรรทัด/บล็อกได้ */
   get traced(): boolean {
     return this.agentTraced
   }
 
-  /** สร้าง worker แล้วโหลดโค้ด — คืนชื่อ agent ถ้าโหลดผ่าน */
   start(): Promise<string> {
     this.dispose()
 
@@ -105,15 +104,20 @@ export class AgentRunner {
         }
       }
 
-      const onError = (event: ErrorEvent) => settle(new Error(event.message || 'โค้ดมีข้อผิดพลาด'))
+      /*
+       * ErrorEvent ที่ไม่มีข้อความติดมา มักไม่ใช่ความผิดของโปรแกรมที่ผู้เล่นต่อไว้
+       * แต่คือตัวรันโหลดไม่ขึ้นเอง เช่น dev server เพิ่งคอมไพล์ใหม่แล้วไฟล์ worker หลุดไปชั่วครู่
+       * บอกให้ตรงตัว จะได้ไม่ไปนั่งไล่แก้บล็อกที่ไม่ได้ผิดอะไรเลย
+       */
+      const onError = (event: ErrorEvent) =>
+        settle(new Error(event.message || 'โหลดตัวรันโค้ดไม่สำเร็จ — ลองรีเฟรชหน้าหนึ่งครั้งแล้วกดใหม่'))
 
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
-      this.send({ type: 'init', code: this.code, memory: this.memory })
+      this.send({ type: 'init', code: this.code, memory: this.memory, frozen: this.frozen })
     })
   }
 
-  /** ขอตาถัดไปจาก agent */
   chooseMove(state: TurnState): Promise<{ row: number; col: number }> {
     if (!this.worker) return Promise.reject(new Error('agent ยังไม่พร้อมทำงาน'))
 

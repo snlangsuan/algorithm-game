@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { SPEEDS, type MazeStatus } from '~/composables/useMazeGame'
+import { SPEEDS } from '~/game/maze/pace'
+import type { MazeStatus } from '~/composables/useMazeGame'
 
 defineProps<{ status: MazeStatus; starting: boolean; solvable: boolean }>()
 

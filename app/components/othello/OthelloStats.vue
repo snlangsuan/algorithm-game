@@ -7,7 +7,7 @@ const props = defineProps<{
   scores: DiscCount
   winner: Player | null
   turn: number
-  /** จำนวนตาที่ฝั่งที่ถึงตาลงได้ตอนนี้ */
+
   moves: number
   names: Record<Player, string>
 }>()

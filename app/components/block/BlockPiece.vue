@@ -14,16 +14,8 @@ const isValue = computed(() => spec.value?.shape === 'value')
 const isHat = computed(() => spec.value?.shape === 'hat')
 const isStatement = computed(() => spec.value?.shape === 'statement')
 
-/**
- * รอยต่อของบล็อก — เดือย (ตัวผู้) ใต้บล็อก กับร่อง (ตัวเมีย) ที่ขอบบน
- * ใช้ตำแหน่งกับขนาดชุดเดียวกัน วางต่อกันแล้วจึงสวมพอดี
- */
 const JOINT = 'absolute left-3.5 h-[6px] w-6 rounded-b-[5px]'
 
-/**
- * กรอบบอกว่าบล็อกนี้กำลังทำงานอยู่
- * บล็อกมีทั้งม่วง เหลือง ฟ้า เขียว จึงใช้ขาวซ้อนบนขอบเข้ม ให้เห็นชัดบนทุกสีและบนพื้นหน้าสว่าง
- */
 const ACTIVE_RING =
   'z-20 outline outline-[3px] outline-offset-[3px] outline-white shadow-[0_0_0_6px_rgba(28,21,36,0.75)]'
 
@@ -34,7 +26,6 @@ const overSlot = ref<string | null>(null)
 
 const canEdit = computed(() => Boolean(props.editable && editor))
 
-/** รูนี้รับบล็อกที่กำลังลากอยู่ได้ไหม — ใช้ทำให้เฉพาะรูที่ใส่ได้สว่างขึ้น */
 const fitsSlot = (slot?: string) => canEdit.value && acceptsValue(slot as never)
 
 function onDragStart(event: DragEvent) {
@@ -87,7 +78,6 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
         canEdit ? 'cursor-grab active:cursor-grabbing' : ''
       ]"
     >
-      <!-- ร่องรับเดือยที่ขอบบน (ตัวเมีย) -->
       <span
         v-if="isStatement"
         class="pointer-events-none top-0 bg-black/25 shadow-[inset_0_1px_1px_rgba(0,0,0,0.3)]"
@@ -95,14 +85,12 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
         aria-hidden="true"
       />
 
-      <!-- เดือยใต้บล็อก (ตัวผู้) — อยู่ชั้นบนเพื่อสวมลงในร่องของบล็อกถัดไป -->
       <span
         v-if="isStatement"
         class="pointer-events-none -bottom-[6px] z-10"
         :class="[JOINT, style.peg]"
         aria-hidden="true"
       />
-      <!-- แถวหัวบล็อก -->
       <div
         class="flex flex-wrap items-center gap-x-1.5 gap-y-1"
         :class="isValue ? 'px-2 py-1 text-[11px]' : 'px-2.5 py-1.5 text-xs'"
@@ -159,7 +147,6 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
             </span>
           </template>
 
-          <!-- ช่องพิมพ์โค้ดดิบ -->
           <template v-else-if="part.type === 'code'">
             <textarea
               v-if="canEdit"
@@ -177,8 +164,6 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
             }}</span>
           </template>
 
-          <!-- ช่องเสียบบล็อกค่า -->
-          <!-- ช่องเสียบค่า: ทำเป็นรูแคปซูล ลากบล็อกค่ามาใกล้แล้วจะสว่างขึ้น -->
           <span
             v-else-if="part.type === 'input'"
             class="inline-flex min-h-6 items-center rounded-full transition-all"
@@ -227,14 +212,11 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
         </button>
       </div>
 
-      <!-- ลำดับคำสั่งข้างใน -->
       <template v-for="part in spec.parts" :key="`${part.type}-${'name' in part ? part.name : ''}`">
-        <!-- ตัว C: คำสั่งข้างในนั่งอยู่ในอ้อมของบล็อกแม่ มีสันซ้ายกับฐานล่างปิดไว้ -->
         <div v-if="part.type === 'body'" class="pb-2 pl-4 pr-1.5">
           <p v-if="part.label" class="px-1 pb-1 text-[11px] text-white/70">{{ part.label }}</p>
 
           <div class="relative rounded-md bg-black/10 p-1 pt-0 ring-1 ring-inset ring-black/5">
-            <!-- เดือยของบล็อกแม่ที่ยื่นลงมารับบล็อกตัวแรกข้างใน -->
             <span
               class="pointer-events-none absolute left-[1.125rem] top-0 z-10 h-[6px] w-6 rounded-b-[5px]"
               :class="style.peg"

@@ -1,12 +1,3 @@
-/**
- * ตัวอย่าง "กินเยอะสุด" ที่ต่อด้วยบล็อก ต้องเป็นอัลกอริทึมเดียวกับบล็อก
- * `ลงหมากที่ [ตาไหนก็ได้] ซึ่ง [พลิกหมากได้มากที่สุด]` เป๊ะ ไม่ใช่แค่คล้าย
- *
- * ตัวอย่างชุดนี้มีไว้สอนว่าบล็อกเดียวนั้นข้างในทำอะไรอยู่ (หน้า /learn/greedy พูดไว้ตรง ๆ)
- * ถ้าสองอันเลือกตาไม่เหมือนกัน คำอธิบายในหน้าความรู้ก็โกหกทันที
- *
- * ต้องเทียบทีละตาบนกระดานเดียวกัน ไม่ใช่ดูผลแพ้ชนะ — เล่นคนละเกมแล้วบังเอิญคะแนนเท่ากันก็มี
- */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -26,7 +17,6 @@ import {
 } from '~/game/othello/engine'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
-/** โปรแกรมบล็อกเดียวที่ใช้เป็นตัวเทียบ — ไม่ใช่ตัวอย่างสำเร็จรูป จึงต้องประกอบเองตรงนี้ */
 function oneBlockProgram(): BlockProgram {
   const place = createBlock('othello.place')
   place.fields.spot = 'any'
@@ -49,7 +39,6 @@ function make(program: BlockProgram, side: Player): OthelloAgent {
   return agent
 }
 
-/** ตัวอย่างสำเร็จรูปที่เปิดตรรกะไว้ — ตัวที่ผู้เล่นเห็นในดรอปดาวน์ */
 function preset(side: Player): OthelloAgent {
   const found = OTHELLO_PACK.presets.find((item) => item.id === 'greedy')
   assert.ok(found, "ไม่มีตัวอย่างชื่อ 'greedy' แล้ว")
@@ -76,7 +65,6 @@ test('ตัวอย่างกินเยอะสุด เลือกต�
       continue
     }
 
-    // ส่ง state คนละ object ให้แต่ละตัว เพราะตัวเห็นตรรกะผูกสิ่งที่จำไว้กับ object ของตานั้น
     const state = () => ({
       board,
       player: side,
@@ -106,7 +94,7 @@ test('ตัวอย่างกินเยอะสุด เลือกต�
 })
 
 test('ตาที่จำไว้ไม่ค้างข้ามตา — ตาถัดไปที่ไม่ได้จำอะไรเลย ต้องไม่ลงตาเดิมที่ลงไม่ได้แล้ว', () => {
-  // สิ่งที่จำไว้ผูกกับ state ของตานั้น ถ้าหลุดข้ามตา "ลงตาที่จำไว้" จะคืนตาเก่าซึ่งลงไม่ได้แล้ว
+
   const agent = preset(BLACK)
 
   let board = createBoard()
