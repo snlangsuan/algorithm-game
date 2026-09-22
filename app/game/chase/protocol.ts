@@ -1,6 +1,7 @@
 import type { ChaseState } from './agent'
 import type { Direction, Point } from './engine'
 import type { LogLine } from '../shared/console'
+import type { Reason } from '../shared/reason'
 
 /**
  * หนึ่งคำสั่งเดินที่ AI ตอบกลับมา
@@ -12,6 +13,8 @@ export interface MoverMove {
   dir: Direction | null
   ok: boolean
   note?: string
+  /** ตัวเลือกที่ชั่งก่อนเลือกทางนี้ — มีเมื่อบล็อกที่ใช้บอกเหตุผลไว้ */
+  reason?: Reason
 }
 
 export type WorkerRequest =

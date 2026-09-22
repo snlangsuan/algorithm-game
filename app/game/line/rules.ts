@@ -12,15 +12,17 @@ import {
   isLost,
   linePosition,
   order,
-  seesPaint,
+  seesMarker,
   type Drive,
   type Run
 } from './engine'
 
-/** ความจำที่อยู่ข้ามการตัดสินใจ — ตรงกับตัวแปร ข (previous) กับ ค (calm) ในบล็อก */
+/** ความจำที่อยู่ข้ามการตัดสินใจ — ตรงกับตัวแปร b (previous) กับ c (calm · marker) ในบล็อก */
 export interface RuleMemory {
   previous: number
   calm: number
+  /** ป้ายเขียวที่เพิ่งเห็น — ติดลบคือซ้าย บวกคือขวา ตัวเลขคือจะจำต่ออีกกี่ครั้ง */
+  marker: number
 }
 
 /** กฎหนึ่งข้อ — ได้สภาพสนามกับกล่องความจำเล็ก ๆ แล้วตอบกำลังมอเตอร์ */
@@ -64,12 +66,60 @@ export const RULES = {
     const turn = (error - memory.previous) * 5 + error * 0.7
     memory.previous = error
 
-    const power = seesPaint(run, 'red') ? 30 : 80
-    return { left: power + turn, right: power - turn }
+    return { left: 80 + turn, right: 80 - turn }
+  },
+
+  /** ตัวอย่าง "มือซ้ายแตะกำแพงบนเส้น" */
+  'left-hand': (run) => {
+    if (sees(run, 0)) return { left: -40, right: 60 }
+    const turn = positionOf(run) * 0.5
+    return { left: 50 + turn, right: 50 - turn }
+  },
+
+  /** ตัวอย่าง "จำป้ายเขียวแล้วเลี้ยวที่ทางแยก" */
+  markers: (run, memory) => {
+    if (seesMarker(run, 'left')) memory.marker = -15
+    if (seesMarker(run, 'right')) memory.marker = 15
+    if (memory.marker < 0) memory.marker += 1
+    if (memory.marker > 0) memory.marker -= 1
+
+    if (memory.marker < 0 && sees(run, 0)) return { left: -40, right: 60 }
+    if (memory.marker > 0 && sees(run, 4)) return { left: 60, right: -40 }
+
+    const turn = positionOf(run) * 0.5
+    return { left: 50 + turn, right: 50 - turn }
   }
 } satisfies Record<string, Rule>
 
 export type RuleId = keyof typeof RULES
+
+/**
+ * PD ที่เลือกกำลัง Kp Kd เองได้ — ใช้วาดภาพของค่าที่ฝูงนกหาเจอ
+ * ตัวอย่างฝูงนกสุ่มเอง จึงอยู่ใน RULES ไม่ได้ แต่ค่าที่มันหาเจอเอามาวิ่งซ้ำได้เป๊ะ
+ */
+export function pdWith(power: number, kp: number, kd: number): Rule {
+  return (run, memory) => {
+    const error = positionOf(run)
+    const change = error - memory.previous
+    memory.previous = error
+
+    const turn = error * kp + change * kd
+    return { left: power + turn, right: power - turn }
+  }
+}
+
+/** วิ่งด้วยกฎที่ส่งมาตรง ๆ จนจบรอบ — แบบเดียวกับ playRule */
+export function playWith(courseId: string, rule: Rule): Run {
+  const run = createRun({ courseId })
+  const memory: RuleMemory = { previous: 0, calm: 0, marker: 0 }
+
+  while (!run.over) {
+    order(run, rule(run, memory))
+    for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
+  }
+
+  return run
+}
 
 /**
  * วิ่งด้วยกฎนั้นจนจบรอบ หรือจนกว่า stop จะบอกให้หยุด (ถามก่อนตัดสินใจทุกครั้ง)
@@ -77,7 +127,7 @@ export type RuleId = keyof typeof RULES
  */
 export function playRule(courseId: string, rule: RuleId, stop?: (run: Run) => boolean): Run {
   const run = createRun({ courseId })
-  const memory: RuleMemory = { previous: 0, calm: 0 }
+  const memory: RuleMemory = { previous: 0, calm: 0, marker: 0 }
 
   while (!run.over && !stop?.(run)) {
     order(run, RULES[rule](run, memory))

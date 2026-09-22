@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import {
+  FINISH_RADIUS,
   LINE_WIDTH,
+  MARKER_SIZE,
   SENSOR_AHEAD,
   VIEW,
   lapPercent,
   paintRuns,
+  progressWord,
   secondsOf,
   type Run
 } from '~/game/line/engine'
@@ -31,13 +34,33 @@ const props = withDefaults(
 const floorId = useId()
 
 /** สีจริงของเส้นแต่ละแบบ — เส้นขาดวาดเป็นจุดจาง ๆ ให้คนเห็นว่าทางไปต่อทางไหน ทั้งที่เซนเซอร์มองไม่เห็น */
-const STROKE = { black: '#1c1524', red: '#e11d48', gap: '#cbc3b3' } as const
+const STROKE = { black: '#1c1524', gap: '#cbc3b3' } as const
 
 const trackRuns = computed(() =>
   paintRuns(props.run.track).map((run, index) => ({
     key: index,
     paint: run.paint,
     d: `M ${run.points.map((at) => `${at.x.toFixed(1)} ${at.y.toFixed(1)}`).join(' L ')}`
+  }))
+)
+
+/** ทางแยกหลอกกับเส้นของเขาวงกต — วาดเป็นเส้นดำเหมือนเส้นหลัก เซนเซอร์ก็เห็นเหมือนกัน */
+const spurPaths = computed(() => [
+  ...(props.run.course.branches ?? []).map((branch) => [props.run.course.points[branch.at]!, branch.to] as const),
+  ...(props.run.course.maze?.lines ?? [])
+].map(([from, to], index) => ({ key: index, d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` })))
+
+/** วงกลมดำที่เป็นเส้นชัยของเขาวงกต */
+const finish = computed(() => props.run.course.maze?.finish ?? null)
+
+/** ป้ายเขียวของ RoboCupJunior กับเครื่องหมายโค้งของ Robotrace — สีต่างกันจะได้ไม่สับสน */
+const MARKER_FILL = { green: '#16a34a', corner: '#64748b' } as const
+
+const markers = computed(() =>
+  props.run.track.markers.map((marker, index) => ({
+    key: index,
+    fill: MARKER_FILL[marker.kind],
+    transform: `translate(${marker.x.toFixed(1)} ${marker.y.toFixed(1)}) rotate(${((marker.angle * 180) / Math.PI).toFixed(1)})`
   }))
 )
 
@@ -49,6 +72,9 @@ const trailPoints = computed(() =>
 
 /** เส้นเริ่ม/เส้นชัย — ขวางเส้นดำตรงจุดออกตัว */
 const startLine = computed(() => {
+  const maze = props.run.course.maze
+  if (maze) return { x: maze.start.x, y: maze.start.y, angle: maze.heading }
+
   const track = props.run.track
   const from = track.points[0]!
   const to = track.points[track.along.findIndex((along) => along >= SENSOR_AHEAD)]!
@@ -80,7 +106,7 @@ const percent = computed(() => Math.floor(lapPercent(props.run)))
       class="absolute inset-0 h-full w-full"
       :viewBox="`0 0 ${VIEW.width} ${VIEW.height}`"
       role="img"
-      :aria-label="`${run.course.name} — วิ่งไปแล้ว ${percent} เปอร์เซ็นต์ของรอบ ใน ${secondsOf(run.time)} วินาที`"
+      :aria-label="`${run.course.name} — วิ่งไปแล้ว ${percent} เปอร์เซ็นต์${progressWord(run.course)} ใน ${secondsOf(run.time)} วินาที`"
     >
       <defs>
         <pattern :id="floorId" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -100,6 +126,30 @@ const percent = computed(() => Math.floor(lapPercent(props.run)))
         :stroke-dasharray="piece.paint === 'gap' ? '2 7' : undefined"
         :stroke-linecap="piece.paint === 'gap' ? 'round' : 'butt'"
         :stroke-linejoin="run.course.smooth ? 'round' : 'miter'"
+      />
+
+      <path
+        v-for="spur in spurPaths"
+        :key="`spur-${spur.key}`"
+        :d="spur.d"
+        fill="none"
+        :stroke="STROKE.black"
+        :stroke-width="LINE_WIDTH"
+        :stroke-linecap="run.course.maze ? 'square' : 'butt'"
+      />
+
+      <circle v-if="finish" :cx="finish.x" :cy="finish.y" :r="FINISH_RADIUS" :fill="STROKE.black" />
+
+      <!-- ป้ายเขียวบอกทางที่ทางแยก และเครื่องหมายโค้ง -->
+      <rect
+        v-for="marker in markers"
+        :key="`marker-${marker.key}`"
+        :transform="marker.transform"
+        :x="-MARKER_SIZE / 2"
+        :y="-MARKER_SIZE / 2"
+        :width="MARKER_SIZE"
+        :height="MARKER_SIZE"
+        :fill="marker.fill"
       />
 
       <!-- เส้นเริ่ม ลายตาหมากรุก -->
@@ -136,7 +186,7 @@ const percent = computed(() => Math.floor(lapPercent(props.run)))
       <span class="ml-0.5 text-[10px]">วิ</span>
       <span class="mx-1.5 text-ink-subtle">·</span>
       <span class="font-mono font-bold tabular-nums text-primary-700">{{ percent }}%</span>
-      <span class="text-[10px]"> ของรอบ</span>
+      <span class="ml-1 text-[10px]">{{ progressWord(run.course) }}</span>
     </div>
 
     <div

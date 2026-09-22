@@ -1,18 +1,35 @@
 <script setup lang="ts">
 import { CATEGORY_STYLE, findSpec, type BlockNode } from '~/game/blocks/types'
 import { BLOCK_EDITOR, BLOCK_RUNTIME, useBlockDrag } from '~/composables/useBlockEditor'
+import { useBlockExplain } from '~/composables/useBlockExplain'
 
-const props = defineProps<{ node: BlockNode; editable?: boolean }>()
+const props = defineProps<{
+  node: BlockNode
+  editable?: boolean
+  /** บล็อกค่าที่ครอบบล็อกนี้อยู่ — ใช้สลับเฉดเมื่อซ้อนกันสีเดียวกัน */
+  host?: { category: string; shaded: boolean }
+}>()
 
 const editor = inject(BLOCK_EDITOR, null)
 const runtime = inject(BLOCK_RUNTIME, null)
 const { start, end, accepts, acceptsValue } = useBlockDrag()
+const explainer = useBlockExplain()
 
 const spec = computed(() => findSpec(props.node.kind))
 const style = computed(() => CATEGORY_STYLE[spec.value?.category ?? 'action'])
 const isValue = computed(() => spec.value?.shape === 'value')
 const isHat = computed(() => spec.value?.shape === 'hat')
 const isStatement = computed(() => spec.value?.shape === 'statement')
+
+/**
+ * บล็อกค่าที่ซ้อนอยู่ในบล็อกสีเดียวกัน (เช่น + ครอบ × ครอบตัวเลข) จะกลืนเป็นเนื้อเดียว
+ * เหลือแค่เส้นขอบบาง ๆ ให้แยกชั้น จึงสลับเฉดเข้ม/อ่อนทีละชั้นแบบ Scratch
+ */
+const shaded = computed(() => {
+  const host = props.host
+  return isValue.value && host !== undefined && host.category === spec.value?.category && !host.shaded
+})
+const childHost = computed(() => ({ category: spec.value?.category ?? '', shaded: shaded.value }))
 
 const JOINT = 'absolute left-3.5 h-[6px] w-6 rounded-b-[5px]'
 
@@ -71,7 +88,10 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
       class="relative ring-1 ring-inset transition-shadow"
       :class="[
         style.block,
-        isValue ? 'rounded-full !ring-white/40' : 'w-full min-w-40 shadow-soft',
+        // รัศมีคงที่แทน rounded-full — บรรทัดเดียวยังเป็นแคปซูลเหมือนเดิม
+        // แต่พอนิพจน์ยาวจนขึ้นบรรทัดใหม่ จะเป็นสี่เหลี่ยมมุมมน ไม่พองเป็นวงรีใหญ่
+        isValue ? 'rounded-[0.875rem] !ring-black/15' : 'w-full min-w-40 shadow-soft',
+        shaded ? 'shadow-[inset_0_0_0_100vmax_rgba(0,0,0,0.14)]' : '',
         isHat ? 'rounded-t-[1.1rem] rounded-b-md' : '',
         !isValue && !isHat ? 'rounded-md' : '',
         active ? ACTIVE_RING : '',
@@ -179,7 +199,12 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
             @dragleave="overSlot = null"
             @drop.prevent.stop="onSlotDrop(part)"
           >
-            <BlockPiece v-if="node.inputs[part.name]" :node="node.inputs[part.name]!" :editable="editable" />
+            <BlockPiece
+              v-if="node.inputs[part.name]"
+              :node="node.inputs[part.name]!"
+              :editable="editable"
+              :host="childHost"
+            />
             <span
               v-else
               class="rounded-full bg-black/30 px-2.5 py-0.5 text-[11px] text-white/55 shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]"
@@ -188,6 +213,29 @@ const label = (options: { value: string; label: string }[], value: unknown) =>
             </span>
           </span>
         </template>
+
+        <button
+          v-if="spec.explain"
+          type="button"
+          title="บล็อกนี้คิดยังไง"
+          aria-label="ดูว่าบล็อกนี้คิดยังไง"
+          class="grid size-4 shrink-0 place-items-center rounded-full bg-white/25 text-[10px] font-bold leading-none text-white transition-colors hover:bg-white hover:text-ink"
+          @pointerdown.stop
+          @click.stop="explainer.open(node.kind)"
+        >
+          ?
+        </button>
+
+        <button
+          v-if="canEdit && spec.unpack"
+          type="button"
+          title="แกะกล่อง — แทนบล็อกนี้ด้วยบล็อกย่อยที่ทำงานเหมือนกันทุกก้าว"
+          class="shrink-0 rounded-full bg-white/25 px-1.5 text-[10px] font-semibold leading-4 text-white transition-colors hover:bg-white hover:text-ink"
+          @pointerdown.stop
+          @click.stop="editor?.unpack(node.id)"
+        >
+          แกะ
+        </button>
 
         <span
           v-if="count > 0"

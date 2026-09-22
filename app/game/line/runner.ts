@@ -1,4 +1,4 @@
-import type { LineState } from './agent'
+import type { LineMemory, LineState } from './agent'
 import type { LogLine } from '../shared/console'
 import type { TraceSummary, TraceTick, WorkerRequest, WorkerResponse } from './protocol'
 import type { Drive } from './engine'
@@ -9,6 +9,10 @@ export interface RunnerOptions {
   onTrace?: (tick: TraceTick) => void
   onSummary?: (summary: TraceSummary) => void
   onLog?: (lines: LogLine[]) => void
+  /** ความจำจากรอบก่อน ๆ — ส่งให้โปรแกรมอ่านผ่าน this.memory */
+  memory?: LineMemory | null
+  /** โปรแกรมสั่งบันทึกความจำ — คนเรียกเป็นคนเขียนลงเครื่อง */
+  onMemory?: (data: LineMemory) => void
 }
 
 export interface ThinkOutcome {
@@ -23,7 +27,8 @@ export interface AgentReady {
 }
 
 interface Pending {
-  resolve: (value: ThinkOutcome) => void
+  /** think ได้ท่ากลับมา ส่วน start / finish ได้แค่ undefined ว่าทำเสร็จแล้ว */
+  resolve: (value: ThinkOutcome | undefined) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -44,12 +49,16 @@ export class LineRunner {
   private readonly onTrace?: (tick: TraceTick) => void
   private readonly onSummary?: (summary: TraceSummary) => void
   private readonly onLog?: (lines: LogLine[]) => void
+  private readonly onMemory?: (data: LineMemory) => void
+  private readonly memory: LineMemory | null
 
   constructor(private readonly code: string, options: RunnerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 1000
     this.onTrace = options.onTrace
     this.onSummary = options.onSummary
     this.onLog = options.onLog
+    this.onMemory = options.onMemory
+    this.memory = options.memory ?? null
   }
 
   get name(): string {
@@ -113,12 +122,29 @@ export class LineRunner {
 
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
-      this.send({ type: 'init', code: this.code })
+      this.send({ type: 'init', code: this.code, memory: this.memory })
     })
   }
 
   /** ถามกำลังมอเตอร์ของจังหวะนี้ */
   think(state: LineState): Promise<ThinkOutcome> {
+    return this.request((id) => ({ type: 'think', id, state })) as Promise<ThinkOutcome>
+  }
+
+  /** บอกว่ากำลังจะออกวิ่ง — รอจน onStart ทำเสร็จ ความจำที่โหลดตอนนั้นจะได้พร้อมก่อนตัดสินใจครั้งแรก */
+  async begin(state: LineState): Promise<void> {
+    await this.request((id) => ({ type: 'start', id, state }))
+  }
+
+  /**
+   * บอกว่าชนแล้ว — รอจน onFinish ทำเสร็จก่อนค่อยปิด worker
+   * ไม่งั้นความจำที่โปรแกรมบันทึกตอนจบรอบจะหายไปพร้อม worker ก่อนส่งออกมาทัน
+   */
+  async finish(state: LineState): Promise<void> {
+    await this.request((id) => ({ type: 'finish', id, state }))
+  }
+
+  private request(make: (id: number) => WorkerRequest): Promise<ThinkOutcome | undefined> {
     if (!this.worker) return Promise.reject(new Error('agent ยังไม่พร้อมทำงาน'))
 
     const id = ++this.seq
@@ -131,7 +157,7 @@ export class LineRunner {
       }, this.timeoutMs)
 
       this.pending.set(id, { resolve, reject, timer })
-      this.send({ type: 'think', id, state })
+      this.send(make(id))
     })
   }
 
@@ -170,6 +196,11 @@ export class LineRunner {
       return
     }
 
+    if (data.type === 'memory') {
+      this.onMemory?.(data.data)
+      return
+    }
+
     const id = data.id
     if (id === null) return
 
@@ -180,6 +211,7 @@ export class LineRunner {
     this.pending.delete(id)
 
     if (data.type === 'move') pending.resolve({ drive: data.drive, watched: data.watched })
+    else if (data.type === 'done') pending.resolve(undefined)
     else pending.reject(new Error(data.message))
   }
 

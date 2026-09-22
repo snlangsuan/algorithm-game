@@ -2,6 +2,7 @@ import type { Matcher, Node, ParseContext } from '~/game/blocks/importer'
 import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { DINO_EXPLAIN } from './explain'
 
 /**
  * ชุดบล็อกของเกมวิ่งหลบ — มีท่าให้สั่งแค่สามท่า แต่ "ตอนไหน" คือทั้งหมดของโจทย์
@@ -50,6 +51,50 @@ const HAT_FINISH: BlockSpec = {
   parts: [{ type: 'text', text: 'เมื่อชน' }],
   emit: () => {}
 }
+
+const BIRD_VALUES: SelectOption[] = [
+  { value: 'jump', label: 'กระโดด' },
+  { value: 'duck', label: 'หมอบ' }
+]
+
+/** บล็อกของฝูงนก (PSO) — ฝูงถูกจำไว้ข้ามรอบเอง ใช้คู่กับหัวบล็อก "เมื่อเริ่มวิ่ง" กับ "เมื่อชน" */
+const SWARM_BLOCKS: BlockSpec[] = [
+  {
+    kind: 'dino.swarm-fly',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: บินหนึ่งก้าว',
+    hint: 'นกตัวถัดไปในฝูงบินไปลองจังหวะชุดใหม่ (กระโดด หมอบ) — ถูกดึงเข้าหาจังหวะที่ดีที่สุดของตัวเองกับของทั้งฝูง ใช้ในหัวบล็อก "เมื่อเริ่มวิ่ง"',
+    parts: [{ type: 'text', text: 'ฝูงนก: นกตัวถัดไปบินหนึ่งก้าว' }],
+    emit: (node, ctx) => ctx.line(node, 'this.swarmFly()')
+  },
+  {
+    kind: 'dino.bird-value',
+    shape: 'value',
+    value: 'number',
+    category: 'data',
+    title: 'จังหวะที่นกตัวนี้เลือก',
+    hint: 'จังหวะของนกที่กำลังลองอยู่รอบนี้ เป็นวินาทีก่อนของจะถึงตัว — อยู่ในช่วง 0.05 ถึง 0.40',
+    parts: [
+      { type: 'text', text: 'จังหวะ' },
+      { type: 'field', name: 'dim', options: BIRD_VALUES },
+      { type: 'text', text: 'ที่นกตัวนี้เลือก' }
+    ],
+    emit: (node, ctx) => `this.birdValue(${quote(ctx.field(node, 'dim'))})`
+  },
+  {
+    kind: 'dino.swarm-score',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: ให้คะแนน',
+    hint: 'ให้คะแนนนกตัวที่เพิ่งลอง — ยิ่งมากยิ่งดี ถ้าดีกว่าที่มันหรือทั้งฝูงเคยได้ จังหวะนี้จะถูกจำไว้ ใช้ในหัวบล็อก "เมื่อชน"',
+    parts: [
+      { type: 'text', text: 'ฝูงนก: ให้คะแนนนกตัวนี้' },
+      { type: 'input', name: 'value', placeholder: 'คะแนน', accepts: 'number' }
+    ],
+    emit: (node, ctx) => ctx.line(node, `this.swarmScore(${ctx.value(node, 'value', '0')})`)
+  }
+]
 
 const BLOCKS: BlockSpec[] = [
   {
@@ -317,6 +362,12 @@ const HERE_VALUES: Array<[string, string]> = [
 ]
 
 const STATEMENT_PARSERS: Matcher[] = [
+  (node, ctx) => (node.type === 'ExpressionStatement' && ctx.call(node.expression, 'swarmFly') ? ctx.make('dino.swarm-fly') : null),
+  (node, ctx) => {
+    if (node.type !== 'ExpressionStatement') return null
+    const args = ctx.call(node.expression, 'swarmScore')
+    return args && args.length === 1 ? ctx.make('dino.swarm-score', {}, { value: ctx.value(args[0]!) }) : null
+  },
   ...ACTIONS.map<Matcher>(
     ([action, kind]) =>
       (node, ctx) => {
@@ -331,6 +382,11 @@ const STATEMENT_PARSERS: Matcher[] = [
 ]
 
 const VALUE_PARSERS: Matcher[] = [
+  (node, ctx) => {
+    const args = ctx.call(node, 'birdValue')
+    const dim = args ? ctx.str(args[0]!) : null
+    return dim && BIRD_VALUES.some((item) => item.value === dim) ? ctx.make('dino.bird-value', { dim }) : null
+  },
   ...RANK_CALLS.map<Matcher>(
     ([name, kind]) =>
       (node, ctx) => {
@@ -391,12 +447,16 @@ export const WORK_LABEL: Record<string, string> = {
   height: 'ดูความสูง',
   seen: 'ดูว่ามีอะไรอยู่ข้างหน้าไหม',
   under: 'ดูว่าลอดใต้ได้ไหม',
-  bottom: 'ดูความสูงจากพื้น'
+  bottom: 'ดูความสูงจากพื้น',
+  swarmFly: 'ฝูงนกบินหนึ่งก้าว',
+  birdValue: 'อ่านจังหวะที่นกเลือก',
+  swarmScore: 'ให้คะแนนนก'
 }
 
 export const DINO_PACK = createPack({
   id: 'dino',
-  blocks: BLOCKS,
+  blocks: [...BLOCKS, ...SWARM_BLOCKS],
+  explain: DINO_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'DinoAgent',
@@ -561,6 +621,26 @@ export const DINO_PACK = createPack({
               ]
             )
           ]
+        }
+      })
+    },
+    {
+      id: 'swarm',
+      name: 'ฝูงนกหาจังหวะ (PSO)',
+      description:
+        'โจทย์เดียวกับวิวัฒนาการ (GA) แต่ใช้ฝูงนกหกตัวหาแทน — นกแต่ละตัวคือจังหวะกระโดดกับจังหวะหมอบหนึ่งชุด ทุกรอบนกตัวถัดไปบินหนึ่งก้าว วิ่งจนชน แล้วรับคะแนนเป็นระยะทาง นกถูกดึงเข้าหาจังหวะที่ดีที่สุดของตัวเองและของทั้งฝูง — กด "ฝึก" แล้วเทียบกับ GA ว่าใครไต่ขึ้นเร็วกว่า',
+      build: (): BlockProgram => ({
+        name: 'ฝูงนกหาจังหวะ (PSO)',
+        scripts: {
+          'dino.on-start': [block('dino.swarm-fly')],
+          'dino.on-tick': [
+            ifElse(
+              block('dino.under', { rank: '1' }),
+              [ifDo(compare(block('dino.time-to', { rank: '1' }), 'lte', block('dino.bird-value', { dim: 'duck' })), [block('dino.duck')])],
+              [ifDo(compare(block('dino.time-to', { rank: '1' }), 'lte', block('dino.bird-value', { dim: 'jump' })), [block('dino.jump')])]
+            )
+          ],
+          'dino.on-finish': [block('dino.swarm-score', {}, { value: block('dino.distance') })]
         }
       })
     }

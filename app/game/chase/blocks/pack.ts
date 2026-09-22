@@ -2,6 +2,7 @@ import type { Matcher, Node, ParseContext } from '~/game/blocks/importer'
 import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { CHASE_EXPLAIN } from './explain'
 
 /** ช่องเป้าหมายที่บล็อก "เดินไปหา…" เล็งได้ */
 const TARGETS: SelectOption[] = [
@@ -67,6 +68,28 @@ const BLOCKS: BlockSpec[] = [
       { type: 'text', text: 'โดยไม่เบียดเพื่อน' }
     ],
     emit: (node, ctx) => ctx.line(node, `return this.spreadTo(${quote(ctx.field(node, 'target'))})`)
+  },
+  {
+    kind: 'chase.flock',
+    shape: 'statement',
+    category: 'action',
+    title: 'ว่ายแบบฝูงปลา',
+    hint: 'กฎฝูงปลาของ Reynolds บวกการไล่เหยื่อ — ทุกทางที่เดินได้ถูกให้คะแนน: ใกล้เป้าตามทางเดินจริงยิ่งดี · "แยก" หักคะแนนช่องที่เบียดเพื่อน · "เรียง" ให้คะแนนเพิ่มถ้าไปทางเดียวกับที่เพื่อนหัน · "รวม" หักคะแนนถ้าห่างกึ่งกลางของฝูง แล้วเดินไปทางที่คะแนนดีที่สุด',
+    parts: [
+      { type: 'text', text: 'ว่ายแบบฝูงปลาเข้าหา' },
+      { type: 'field', name: 'target', options: TARGETS },
+      { type: 'text', text: 'แยก' },
+      { type: 'input', name: 'separate', placeholder: 'น้ำหนัก', accepts: 'number' },
+      { type: 'text', text: 'เรียง' },
+      { type: 'input', name: 'align', placeholder: 'น้ำหนัก', accepts: 'number' },
+      { type: 'text', text: 'รวม' },
+      { type: 'input', name: 'gather', placeholder: 'น้ำหนัก', accepts: 'number' }
+    ],
+    emit: (node, ctx) =>
+      ctx.line(
+        node,
+        `return this.flockTo(${quote(ctx.field(node, 'target'))}, ${ctx.value(node, 'separate', '0')}, ${ctx.value(node, 'align', '0')}, ${ctx.value(node, 'gather', '0')})`
+      )
   },
   {
     kind: 'chase.chase-straight',
@@ -350,6 +373,50 @@ const HELPERS = `
     return เลือก
   }
 
+  // ฝูงปลา (Boids ของ Reynolds) — ให้คะแนนทุกทางที่เดินได้ด้วยกฎสี่ข้อ แล้วเลือกทางที่คะแนนดีที่สุด
+  //   ไล่: ยิ่งใกล้เป้าหมายตามทางเดินจริงยิ่งดี
+  //   แยก: ช่องที่ห่างเพื่อนไม่ถึงสามช่องโดนหักคะแนน ยิ่งใกล้ยิ่งโดนหักมาก
+  //   เรียง: ไปทางเดียวกับที่เพื่อนหันอยู่ได้คะแนนเพิ่ม ตัวละหนึ่งส่วน
+  //   รวม: ยิ่งห่างจุดกึ่งกลางของเพื่อนยิ่งโดนหักคะแนน
+  flockTo(target, แยก, เรียง, รวม) {
+    const หมาย = this.spot(target)
+    const กริด = this.here.grid
+    const ระยะ = this.field(กริด, หมาย)
+    const เพื่อน = this.here.hunters.filter((ตัว) => ตัว.index !== this.here.me.index)
+    const กลาง =
+      เพื่อน.length === 0
+        ? null
+        : {
+            row: เพื่อน.reduce((รวมแถว, ตัว) => รวมแถว + ตัว.row, 0) / เพื่อน.length,
+            col: เพื่อน.reduce((รวมคอลัมน์, ตัว) => รวมคอลัมน์ + ตัว.col, 0) / เพื่อน.length
+          }
+
+    let เลือก = null
+    let ดีสุด = -Infinity
+
+    for (const ช่อง of this.neighbors(กริด, this.here.me)) {
+      if (this.taken(ช่อง)) continue
+      this.visit(ช่อง)
+
+      let คะแนน = -ระยะ[ช่อง.row][ช่อง.col]
+
+      for (const ตัว of เพื่อน) {
+        const ห่าง = this.manhattan(ช่อง, ตัว)
+        if (ห่าง < 3) คะแนน -= Number(แยก) * (3 - ห่าง)
+        if (ตัว.facing === ช่อง.dir) คะแนน += Number(เรียง)
+      }
+
+      if (กลาง) คะแนน -= Number(รวม) * (Math.abs(ช่อง.row - กลาง.row) + Math.abs(ช่อง.col - กลาง.col))
+
+      if (คะแนน > ดีสุด) {
+        ดีสุด = คะแนน
+        เลือก = ช่อง.dir
+      }
+    }
+
+    return เลือก
+  }
+
   // มองแค่ระยะเส้นตรง จึงเดินเข้ามุมอับได้ง่าย ๆ
   stepToward(target) {
     const หมาย = this.spot(target)
@@ -479,6 +546,19 @@ const STATEMENT_PARSERS: Matcher[] = [
 
   (node, ctx) => {
     const back = ctx.returned(node)
+    const args = back ? ctx.call(back, 'flockTo') : null
+    const target = args ? ctx.str(args[0]!) : null
+    if (!args || args.length !== 4 || !target) return null
+
+    return ctx.make(
+      'chase.flock',
+      { target },
+      { separate: ctx.value(args[1]!), align: ctx.value(args[2]!), gather: ctx.value(args[3]!) }
+    )
+  },
+
+  (node, ctx) => {
+    const back = ctx.returned(node)
     if (back === undefined) return null
     if (back === null) return ctx.make('chase.hold')
     return back.type === 'Literal' && back.value === null ? ctx.make('chase.hold') : null
@@ -534,6 +614,7 @@ function unwrap(statements: Node[], ctx: ParseContext): Node[] {
 export const WORK_LABEL: Record<string, string> = {
   stepTo: 'หาทางที่สั้นที่สุดแล้วก้าวตาม',
   spreadTo: 'หาทางที่สั้นที่สุดแบบไม่เบียดเพื่อน',
+  flockTo: 'ให้คะแนนทางตามกฎฝูงปลา',
   mateGap: 'ดูว่าเพื่อนอยู่ห่างแค่ไหน',
   stepToward: 'เดินเข้าหาแบบตรงที่สุด',
   wander: 'เดินสุ่ม',
@@ -552,6 +633,7 @@ export const WORK_LABEL: Record<string, string> = {
 export const CHASE_PACK = createPack({
   id: 'chase',
   blocks: BLOCKS,
+  explain: CHASE_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'ChaseAgent',
@@ -640,6 +722,20 @@ export const CHASE_PACK = createPack({
                 )
               ]
             )
+          ]
+        }
+      })
+    },
+    {
+      id: 'flock',
+      name: 'ไล่เป็นฝูงปลา (Boids)',
+      description:
+        'ไม่มีใครสั่งการ ผู้ไล่ล่าทุกตัวทำตามกฎฝูงปลาของ Reynolds ชุดเดียวกัน: ไม่เบียดเพื่อน ไปทางเดียวกับเพื่อน และไม่ห่างฝูง บวกกฎข้อที่สี่คือว่ายเข้าหาเหยื่อ — น้ำหนักของกฎฝูงต้องเบากว่าแรงไล่ ลองเพิ่ม "แยก" เป็น 2 แล้วดูว่าฝูงวนหลบกันเองจนเหยื่อหนีรอด',
+      build: (): BlockProgram => ({
+        name: 'ไล่เป็นฝูงปลา (Boids)',
+        scripts: {
+          'chase.on-turn': [
+            block('chase.flock', { target: 'hero' }, { separate: number(0.6), align: number(0.3), gather: number(0.1) })
           ]
         }
       })

@@ -2,6 +2,7 @@ import type { Matcher, Node, ParseContext } from '~/game/blocks/importer'
 import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { RUNNER_EXPLAIN } from './runner-explain'
 
 /**
  * ชุดบล็อกของ "คนหนี" — สนามเดียวกับฝ่ายไล่ แต่คิดคนละเรื่อง
@@ -78,7 +79,66 @@ const BLOCKS: BlockSpec[] = [
       { type: 'text', text: 'เดินทางที่ปลอดภัยที่สุดโดยยังเข้าใกล้' },
       { type: 'field', name: 'target', options: TARGETS }
     ],
-    emit: (node, ctx) => ctx.line(node, `return this.safeStep(${quote(ctx.field(node, 'target'))})`)
+    emit: (node, ctx) => ctx.line(node, `return this.safeStep(${quote(ctx.field(node, 'target'))})`),
+    // ข้างในคือ: ลองทุกช่องข้าง ๆ → ให้คะแนน −ก้าวถึงเป้า − อันตราย × 2 → เดินไปช่องที่คะแนนสูงสุด
+    unpack: (node) => {
+      const target = String(node.fields.target ?? 'goal')
+      const danger = block(
+        'math-fn',
+        { fn: 'max' },
+        { left: number(0), right: math(number(3), 'sub', block('runner.try-hunter')) }
+      )
+      const score = math(
+        math(number(0), 'sub', block('runner.try-to', { target })),
+        'sub',
+        math(danger, 'mul', number(2))
+      )
+
+      return [
+        block('runner.each-step', {}, {}, { do: [block('runner.try-score', {}, { value: score })] }),
+        block('runner.go-best')
+      ]
+    }
+  },
+  {
+    kind: 'runner.each-step',
+    shape: 'statement',
+    category: 'control',
+    title: 'ลองทุกช่องข้าง ๆ ที่เดินไปได้',
+    hint: 'ทำคำสั่งข้างในกับช่องข้าง ๆ ทีละช่อง (ขึ้น ขวา ลง ซ้าย) — ข้างในใช้ "ช่องที่ลอง" ได้',
+    parts: [
+      { type: 'text', text: 'ลองทุกช่องข้าง ๆ ที่เดินไปได้ ทีละช่อง' },
+      { type: 'body', name: 'do' }
+    ],
+    emit: (node, ctx) => {
+      ctx.line(node, 'for (const ช่องที่ลอง of this.tryStart()) {')
+      ctx.indent(1)
+      ctx.raw('this.tryCell(ช่องที่ลอง)')
+      ctx.body(node, 'do')
+      ctx.indent(-1)
+      ctx.raw('}')
+    }
+  },
+  {
+    kind: 'runner.try-score',
+    shape: 'statement',
+    category: 'action',
+    title: 'ให้คะแนนช่องที่ลอง',
+    hint: 'จดคะแนนของช่องนี้ไว้ — ช่องที่คะแนนสูงสุดคือช่องที่จะเดินไป (เท่ากันเอาช่องที่ลองก่อน)',
+    parts: [
+      { type: 'text', text: 'ให้คะแนนช่องที่ลอง' },
+      { type: 'input', name: 'value', placeholder: 'คะแนน', accepts: 'number' }
+    ],
+    emit: (node, ctx) => ctx.line(node, `this.tryScore(${ctx.value(node, 'value', '0')})`)
+  },
+  {
+    kind: 'runner.go-best',
+    shape: 'statement',
+    category: 'action',
+    title: 'เดินไปช่องที่คะแนนสูงสุด',
+    hint: 'ใช้ต่อจาก "ลองทุกช่องข้าง ๆ" — เดินไปช่องที่ได้คะแนนสูงสุด ถ้ายังไม่ได้ลองเลยจะยืนอยู่กับที่',
+    parts: [{ type: 'text', text: 'เดินไปช่องที่คะแนนสูงสุด' }],
+    emit: (node, ctx) => ctx.line(node, 'return this.tryBest()')
   },
   {
     kind: 'runner.wander',
@@ -121,6 +181,29 @@ const BLOCKS: BlockSpec[] = [
       { type: 'field', name: 'target', options: TARGETS }
     ],
     emit: (node, ctx) => `this.distanceTo(${quote(ctx.field(node, 'target'))})`
+  },
+  {
+    kind: 'runner.try-to',
+    shape: 'value',
+    value: 'number',
+    category: 'sense',
+    title: 'ก้าวจากช่องที่ลองถึง',
+    hint: 'ระยะเดินจริงจากช่องที่กำลังลองไปถึงเป้าหมาย — ไปไม่ถึงได้ 99 · ใช้ในบล็อก "ลองทุกช่องข้าง ๆ"',
+    parts: [
+      { type: 'text', text: 'ก้าวจากช่องที่ลองถึง' },
+      { type: 'field', name: 'target', options: TARGETS }
+    ],
+    emit: (node, ctx) => `this.tryDistance(${quote(ctx.field(node, 'target'))})`
+  },
+  {
+    kind: 'runner.try-hunter',
+    shape: 'value',
+    value: 'number',
+    category: 'sense',
+    title: 'ผู้ไล่ล่าห่างช่องที่ลองกี่ก้าว',
+    hint: 'ระยะเดินจริงจากผู้ไล่ล่าตัวที่ใกล้ที่สุดถึงช่องที่กำลังลอง · ใช้ในบล็อก "ลองทุกช่องข้าง ๆ"',
+    parts: [{ type: 'text', text: 'ผู้ไล่ล่าห่างช่องที่ลองกี่ก้าว' }],
+    emit: () => 'this.tryThreat()'
   },
   {
     kind: 'runner.seen',
@@ -271,17 +354,40 @@ const HELPERS = `
   }
 
   stepTo(target) {
-    const ทาง = this.pathTo(this.here.grid, this.here.me, this.spot(target))
+    const หมาย = this.spot(target)
+    const ทาง = this.pathTo(this.here.grid, this.here.me, หมาย)
     if (ทาง.length < 2) return null
 
     for (const ช่อง of ทาง) this.visit(ช่อง)
-    return this.towards(this.here.me, ทาง[1])
+    const เลือก = this.towards(this.here.me, ทาง[1])
+
+    // ระยะจากเป้าหมายถึงทุกช่อง คิดรอบเดียวแล้วอ่านช่องข้าง ๆ — ไว้บอกว่าทำไมทางนี้สั้นที่สุด
+    const ระยะ = this.field(this.here.grid, หมาย)
+    this.reason({
+      title: 'เดินตามทางที่สั้นที่สุด',
+      rule: 'เลือกช่องที่เหลือก้าวถึงเป้าหมายน้อยที่สุด',
+      columns: ['ก้าวถึงเป้า'],
+      options: this.neighbors(this.here.grid, this.here.me).map((ช่อง) => ({
+        label: this.dirName(ช่อง.dir),
+        at: ช่อง,
+        values: [ระยะ[ช่อง.row][ช่อง.col]],
+        chosen: ช่อง.dir === เลือก
+      }))
+    })
+
+    return เลือก
+  }
+
+  // ชื่อทิศภาษาไทย ใช้เขียนตารางเหตุผล
+  dirName(dir) {
+    return { up: 'ขึ้น', right: 'ขวา', down: 'ลง', left: 'ซ้าย' }[dir] ?? dir
   }
 
   // ถอยออกห่างอย่างเดียว ไม่สนเป้าหมาย นอกจากตอนที่หลายทางปลอดภัยเท่ากัน
   dodge() {
     const ระยะจากผู้ไล่ล่า = this.threat()
     const หมาย = this.goalNow()
+    const ตัวเลือก = []
 
     let เลือก = null
     let ปลอดภัยสุด = -1
@@ -290,6 +396,7 @@ const HELPERS = `
     for (const ช่อง of this.neighbors(this.here.grid, this.here.me)) {
       const ปลอดภัย = ระยะจากผู้ไล่ล่า(ช่อง)
       const ถึงเป้า = this.pathLength(this.here.grid, ช่อง, หมาย)
+      ตัวเลือก.push({ ช่อง, values: [ปลอดภัย, ถึงเป้า] })
 
       if (ปลอดภัย > ปลอดภัยสุด || (ปลอดภัย === ปลอดภัยสุด && ถึงเป้า < ใกล้เป้าสุด)) {
         ปลอดภัยสุด = ปลอดภัย
@@ -299,6 +406,17 @@ const HELPERS = `
     }
 
     this.visit(this.here.me)
+    this.reason({
+      title: 'ถอยให้ห่างผู้ไล่ล่า',
+      rule: 'เลือกช่องที่ห่างผู้ไล่ล่ามากที่สุด\\nเสมอกัน → เลือกช่องที่ใกล้เป้าหมายกว่า',
+      columns: ['ห่างผู้ไล่ล่า', 'ก้าวถึงเป้า'],
+      options: ตัวเลือก.map((ตัว) => ({
+        label: this.dirName(ตัว.ช่อง.dir),
+        at: ตัว.ช่อง,
+        values: ตัว.values,
+        chosen: ตัว.ช่อง.dir === เลือก
+      }))
+    })
     return เลือก
   }
 
@@ -314,11 +432,15 @@ const HELPERS = `
 
     let เลือก = null
     let คะแนนดีสุด = -Infinity
+    const ตัวเลือก = []
 
     for (const ช่อง of this.neighbors(กริด, this.here.me)) {
-      const อันตราย = Math.max(0, 3 - ระยะจากผู้ไล่ล่า(ช่อง))
+      const ห่างผู้ไล่ล่า = ระยะจากผู้ไล่ล่า(ช่อง)
+      const อันตราย = Math.max(0, 3 - ห่างผู้ไล่ล่า)
       const ถึงเป้า = this.pathLength(กริด, ช่อง, หมาย)
-      const คะแนน = -(ถึงเป้า < 0 ? 99 : ถึงเป้า) - อันตราย * 2
+      const ก้าว = ถึงเป้า < 0 ? 99 : ถึงเป้า
+      const คะแนน = -ก้าว - อันตราย * 2
+      ตัวเลือก.push({ ช่อง, values: [ก้าว, ห่างผู้ไล่ล่า, อันตราย, คะแนน] })
 
       if (คะแนน > คะแนนดีสุด) {
         คะแนนดีสุด = คะแนน
@@ -328,7 +450,89 @@ const HELPERS = `
       this.visit(ช่อง)
     }
 
+    // บอกหน้าจอว่าชั่งอะไรไปบ้าง — สนามเขียนคะแนนลงบนช่อง ตารางแยกให้เห็นว่ามาจากไหน
+    this.reason({
+      title: 'ชั่งความปลอดภัยกับเป้าหมาย',
+      rule: 'อันตราย = max(0, 3 − ห่างผู้ไล่ล่า)\\nคะแนน = −ก้าวถึงเป้า − อันตราย × 2',
+      columns: ['ก้าวถึงเป้า', 'ห่างผู้ไล่ล่า', 'อันตราย', 'คะแนน'],
+      options: ตัวเลือก.map((ตัว) => ({
+        label: this.dirName(ตัว.ช่อง.dir),
+        at: ตัว.ช่อง,
+        values: ตัว.values,
+        chosen: ตัว.ช่อง.dir === เลือก
+      }))
+    })
+
     return เลือก
+  }
+
+  // ---------- ลองทีละช่อง: บล็อกย่อยของ "เดินทางที่ปลอดภัยที่สุด" ----------
+
+  // เริ่มรอบลอง — วัดครั้งเดียวว่าผู้ไล่ล่าคุมพื้นที่ไหน แล้วคืนช่องข้าง ๆ ที่เดินได้ให้วนลองทีละช่อง
+  tryStart() {
+    this.ลอง = {
+      ระยะจากผู้ไล่ล่า: this.threat(),
+      ช่อง: null,
+      วัด: {},
+      ตัวเลือก: [],
+      ดีสุด: null,
+      คะแนนดีสุด: -Infinity
+    }
+    return this.neighbors(this.here.grid, this.here.me)
+  }
+
+  tryCell(ช่อง) {
+    this.ลอง.ช่อง = ช่อง
+    this.ลอง.วัด = {}
+    this.visit(ช่อง)
+  }
+
+  // ก้าวจากช่องที่ลองถึงเป้าหมาย — ไปไม่ถึงนับเป็น 99 จะได้ไม่ถูกเลือก
+  tryDistance(target) {
+    if (!this.ลอง?.ช่อง) return 99
+    const ระยะ = this.pathLength(this.here.grid, this.ลอง.ช่อง, this.spot(target))
+    const ก้าว = ระยะ < 0 ? 99 : ระยะ
+    this.ลอง.วัด['ก้าวถึงเป้า'] = ก้าว
+    return ก้าว
+  }
+
+  tryThreat() {
+    if (!this.ลอง?.ช่อง) return 99
+    const ห่าง = this.ลอง.ระยะจากผู้ไล่ล่า(this.ลอง.ช่อง)
+    this.ลอง.วัด['ห่างผู้ไล่ล่า'] = ห่าง
+    return ห่าง
+  }
+
+  // จดคะแนน — สูงกว่าที่ดีที่สุดเดิมจริง ๆ ถึงเปลี่ยน เท่ากันเก็บช่องที่ลองก่อนไว้
+  tryScore(คะแนน) {
+    if (!this.ลอง?.ช่อง) return
+    this.ลอง.ตัวเลือก.push({ ช่อง: this.ลอง.ช่อง, วัด: this.ลอง.วัด, คะแนน })
+
+    if (คะแนน > this.ลอง.คะแนนดีสุด) {
+      this.ลอง.คะแนนดีสุด = คะแนน
+      this.ลอง.ดีสุด = this.ลอง.ช่อง
+    }
+  }
+
+  // เดินไปช่องที่คะแนนสูงสุด แล้วบอกหน้าจอว่าแต่ละช่องได้เท่าไร วัดอะไรไปบ้าง
+  tryBest() {
+    const ลอง = this.ลอง
+    this.ลอง = null
+    if (!ลอง) return null
+
+    const หัวข้อ = [...new Set(ลอง.ตัวเลือก.flatMap((ตัว) => Object.keys(ตัว.วัด)))]
+    this.reason({
+      title: 'ลองทุกช่องข้าง ๆ แล้วเลือกคะแนนสูงสุด',
+      columns: [...หัวข้อ, 'คะแนน'],
+      options: ลอง.ตัวเลือก.map((ตัว) => ({
+        label: this.dirName(ตัว.ช่อง.dir),
+        at: ตัว.ช่อง,
+        values: [...หัวข้อ.map((ชื่อ) => ตัว.วัด[ชื่อ] ?? 0), ตัว.คะแนน],
+        chosen: ตัว.ช่อง === ลอง.ดีสุด
+      }))
+    })
+
+    return ลอง.ดีสุด ? ลอง.ดีสุด.dir : null
   }
 
   wander() {
@@ -374,6 +578,8 @@ function block(
 
 const number = (value: number) => block('number', { value })
 
+const math = (left: BlockNode, op: string, right: BlockNode) => block('math', { op }, { left, right })
+
 const compare = (left: BlockNode, op: string, right: BlockNode) =>
   block('compare', { op }, { left, right })
 
@@ -388,15 +594,37 @@ const MOVE_CALLS: Array<[string, string, string]> = [
 
 const SENSE_CALLS: Array<[string, string, string]> = [
   ['canGo', 'runner.can-walk', 'dir'],
-  ['distanceTo', 'runner.steps-to', 'target']
+  ['distanceTo', 'runner.steps-to', 'target'],
+  ['tryDistance', 'runner.try-to', 'target']
 ]
 
 const PLAIN_SENSES: Array<[string, string]> = [
+  ['tryThreat', 'runner.try-hunter'],
   ['seen', 'runner.seen'],
   ['gemsLeft', 'runner.gems-left']
 ]
 
 const STATEMENT_PARSERS: Matcher[] = [
+  (node, ctx) => {
+    if (node.type !== 'ForOfStatement' || !ctx.call(node.right, 'tryStart')) return null
+
+    const inner = (node.body?.body ?? []).filter(
+      (item: Node) => !(item.type === 'ExpressionStatement' && ctx.call(item.expression, 'tryCell'))
+    )
+    return ctx.make('runner.each-step', {}, {}, { do: inner.flatMap((item: Node) => ctx.body(item)) })
+  },
+
+  (node, ctx) => {
+    if (node.type !== 'ExpressionStatement') return null
+    const args = ctx.call(node.expression, 'tryScore')
+    return args ? ctx.make('runner.try-score', {}, { value: args[0] ? ctx.value(args[0]) : null }) : null
+  },
+
+  (node, ctx) => {
+    const back = ctx.returned(node)
+    return back && ctx.call(back, 'tryBest') ? ctx.make('runner.go-best') : null
+  },
+
   ...MOVE_CALLS.map<Matcher>(
     ([name, kind, field]) =>
       (node, ctx) => {
@@ -472,6 +700,10 @@ function unwrap(statements: Node[], ctx: ParseContext): Node[] {
 export const WORK_LABEL: Record<string, string> = {
   stepTo: 'หาทางที่สั้นที่สุดแล้วก้าวตาม',
   safeStep: 'ชั่งความปลอดภัยกับเป้าหมาย',
+  tryStart: 'เริ่มลองช่องข้าง ๆ',
+  tryDistance: 'วัดก้าวจากช่องที่ลองถึงเป้าหมาย',
+  tryThreat: 'วัดว่าผู้ไล่ล่าห่างช่องที่ลองแค่ไหน',
+  tryBest: 'เลือกช่องที่คะแนนสูงสุด',
   dodge: 'ถอยให้ห่างผู้ไล่ล่า',
   wander: 'เดินสุ่ม',
   threat: 'วัดว่าผู้ไล่ล่าคุมพื้นที่ไหนอยู่',
@@ -486,6 +718,7 @@ export const WORK_LABEL: Record<string, string> = {
 export const RUNNER_PACK = createPack({
   id: 'runner',
   blocks: BLOCKS,
+  explain: RUNNER_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'ChaseAgent',

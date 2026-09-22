@@ -1,4 +1,4 @@
-import { LineAgent, type DriveResult, type LineState } from './agent'
+import { LineAgent, type DriveResult, type LineMemory, type LineState } from './agent'
 import { clampPower, isDrive, type Drive } from './engine'
 import { instrument } from '../shared/instrument'
 import { captureConsole, clearLog, pushLog, takeLog } from '../shared/console'
@@ -125,7 +125,7 @@ function countCalls(instance: LineAgent): LineAgent {
   return instance
 }
 
-function build(code: string): { instance: LineAgent; traced: boolean } {
+function build(code: string, memory: LineMemory | null): { instance: LineAgent; traced: boolean } {
   const marked = instrument(code, LINE_MARKER)
 
   const factory = new Function(
@@ -150,6 +150,21 @@ return Agent;`
   if (instance.step === LineAgent.prototype.step) {
     throw new Error('Agent ยังไม่ได้ override เมธอด step(state)')
   }
+
+  instance.memory = memory
+
+  // ความจำส่งกลับไปให้หน้าเว็บเขียนลงเครื่อง — worker ตายเมื่อไรของในนี้ก็หายไปด้วย
+  Object.defineProperty(instance, 'saveMemory', {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value(data: LineMemory) {
+      if (!data || typeof data !== 'object') throw new Error('saveMemory() ต้องรับ object ธรรมดา')
+
+      instance.memory = data
+      post({ type: 'memory', data })
+    }
+  })
 
   Object.defineProperty(instance, 'watch', {
     configurable: true,
@@ -210,7 +225,7 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
   try {
     switch (request.type) {
       case 'init': {
-        const built = build(request.code)
+        const built = build(request.code, request.memory)
         agent = built.instance
         previous = { left: 0, right: 0 }
         post({
@@ -218,6 +233,18 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
           name: typeof agent.name === 'string' ? agent.name : 'Agent',
           traced: built.traced
         })
+        break
+      }
+
+      case 'start': {
+        agent?.onStart(request.state)
+        post({ type: 'done', id: request.id })
+        break
+      }
+
+      case 'finish': {
+        agent?.onFinish(request.state)
+        post({ type: 'done', id: request.id })
         break
       }
 

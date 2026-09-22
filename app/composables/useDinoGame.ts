@@ -558,7 +558,7 @@ export function useDinoGame() {
   onMounted(refreshMemory)
 
   /** โปรแกรมนี้จำอะไรข้ามรอบไหม — ไม่จำก็ฝึกไปก็ไม่เก่งขึ้น */
-  const learns = computed(() => usesBlock(blocks.program, ['remember', 'forget']))
+  const learns = computed(() => usesBlock(blocks.program, ['remember', 'forget', 'dino.swarm-fly', 'dino.swarm-score']))
 
   const training = reactive<DinoTraining>({
     running: false,

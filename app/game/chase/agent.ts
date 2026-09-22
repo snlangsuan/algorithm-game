@@ -22,6 +22,7 @@ import {
   type Match,
   type Point
 } from './engine'
+import type { Reason } from '../shared/reason'
 
 /** ตัวละครหนึ่งตัวเท่าที่ AI มองเห็น — ใช้ได้ทั้งผู้ไล่ล่าและคนหนี */
 export interface MoverView extends Point {
@@ -90,6 +91,12 @@ export class ChaseAgent {
 
   /** บอกสนามว่าดูช่องนี้อยู่ — สนามจะระบายสีจาง ๆ ให้เห็นว่า AI คิดถึงทางไหน */
   visit(_cell: Point): void {}
+
+  /**
+   * บอกสนามว่าชั่งตัวเลือกไหนบ้าง ได้คะแนนเท่าไร แล้วเลือกตัวไหน
+   * สนามจะเขียนคะแนนลงบนช่อง และแผง "ทำไมถึงเลือกทางนี้" จะแสดงเป็นตาราง
+   */
+  reason(_why: Reason): void {}
 
   inside(grid: Grid, row: number, col: number): boolean {
     return inside(grid, row, col)

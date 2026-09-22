@@ -1,4 +1,4 @@
-import type { MazeState } from './agent'
+import type { MazeMemory, MazeState } from './agent'
 import type { Point } from './engine'
 import type { LogLine } from '../shared/console'
 
@@ -11,11 +11,11 @@ export type LineTimeline = number[]
 export type AgentMode = 'plan' | 'step'
 
 export type WorkerRequest =
-  | { type: 'init'; code: string }
+  | { type: 'init'; code: string; memory: MazeMemory | null }
   | { type: 'start'; state: MazeState }
   | { type: 'solve'; id: number; state: MazeState }
   | { type: 'step'; id: number; state: MazeState }
-  | { type: 'finish'; ok: boolean; steps: number; cost: number }
+  | { type: 'finish'; id: number; ok: boolean; steps: number; cost: number }
 
 export interface TraceTick {
   type: 'trace'
@@ -42,6 +42,9 @@ export type WorkerResponse =
   | { type: 'ready'; name: string; mode: AgentMode; traced: boolean }
   | { type: 'path'; id: number; path: Point[]; explored: ExploredCell[]; timeline: number[] }
   | { type: 'move'; id: number; move: Point | null; explored: ExploredCell[]; timeline: number[] }
+  /** onFinish ทำงานจบแล้ว — ความจำที่บันทึกระหว่างนั้นถูกส่งออกไปก่อนข้อความนี้เสมอ */
+  | { type: 'done'; id: number }
+  | { type: 'memory'; data: MazeMemory }
   | { type: 'error'; id: number | null; message: string }
   | TraceTick
   | TraceSummary

@@ -34,6 +34,8 @@ export interface BlockEditorApi {
   remove: (id: BlockId) => void
   duplicate: (id: BlockId) => void
   setField: (node: BlockNode, name: string, value: string | number) => void
+  /** แทนบล็อกด้วยบล็อกย่อยที่ทำงานเหมือนกัน — ใช้ได้กับบล็อกที่มี unpack */
+  unpack: (id: BlockId) => void
 }
 
 export interface BlockRuntime {

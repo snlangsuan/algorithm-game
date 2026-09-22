@@ -1,4 +1,7 @@
 import type { ShallowRef } from 'vue'
+import { usesBlock } from '~/game/blocks/program'
+import type { MazeMemory } from '~/game/maze/agent'
+import { eraseLoops, pathCost } from '~/game/maze/ants'
 import type { MazeState } from '~/game/maze/agent'
 import {
   DEFAULT_OPTIONS,
@@ -150,6 +153,48 @@ const stuckMessage = (mode: AuthorMode, at: Point): string =>
     ? `หยุดที่ (${at.row}, ${at.col}) — อ่านโปรแกรมจนจบแล้วไม่เจอบล็อกที่สั่งเดิน`
     : `หยุดเดินที่ (${at.row}, ${at.col}) — step() คืน null`
 
+export interface MazeMemoryInfo {
+  label?: string
+  bytes: number
+}
+
+/** ผลของการฝึกแต่ละรอบ — ราคาของทางที่เดิน กับว่าถึงทางออกไหม */
+export interface MazeTrainingRound {
+  ok: boolean
+  /** ราคาที่เดินจริงทั้งหมด รวมวงวน */
+  cost: number
+  steps: number
+  /** ราคาของทางหลังตัดวงวนออก — ทางที่มดทิ้งกลิ่นไว้ (ไม่ถึงทางออกเป็น null) */
+  shortcut: number | null
+}
+
+export interface MazeTraining {
+  running: boolean
+  /** เลขรอบฝึก — กดหยุดแล้วเริ่มใหม่เร็ว ๆ รอบเก่าจะได้ไม่ไปปิดสวิตช์ทับรอบใหม่ */
+  session: number
+  total: number
+  rounds: MazeTrainingRound[]
+  error: string | null
+}
+
+const MEMORY_PREFIX = 'maze:memory:'
+
+const MEMORY_LIMIT = 256 * 1024
+
+/** ความจำผูกกับ "โปรแกรมไหน" — ตัวอย่างแต่ละชุด และโปรแกรมของฉันแต่ละอัน มีกล่องของตัวเอง */
+const memoryKey = (programKey: string): string => `${MEMORY_PREFIX}blocks:${programKey}`
+
+function readMemory(key: string): { data: MazeMemory; bytes: number } | null {
+  if (!import.meta.client) return null
+
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? { data: JSON.parse(raw) as MazeMemory, bytes: raw.length } : null
+  } catch {
+    return null
+  }
+}
+
 interface MazeRun {
   maze: ShallowRef<Maze>
   status: Ref<MazeStatus>
@@ -172,6 +217,23 @@ interface MazeRun {
   generation: number
   runner: MazeRunner | null
   clear: () => void
+  /** กล่องความจำของโปรแกรมที่เลือกอยู่ */
+  memoryKey: ComputedRef<string>
+  memory: Ref<MazeMemoryInfo | null>
+}
+
+function writeMemory(run: MazeRun, data: MazeMemory): void {
+  if (!import.meta.client) return
+
+  try {
+    const raw = JSON.stringify(data)
+    if (raw.length > MEMORY_LIMIT) return
+
+    localStorage.setItem(run.memoryKey.value, raw)
+    run.memory.value = { label: typeof data.label === 'string' ? data.label : undefined, bytes: raw.length }
+  } catch {
+    // เขียนลงเครื่องไม่ได้ (โหมดส่วนตัว / เต็ม) ก็แค่จำไม่ได้ เกมยังเล่นต่อได้
+  }
 }
 
 function disposeRunner(run: MazeRun): void {
@@ -292,13 +354,19 @@ function finish(
   run.result.value = { ok, message, steps, cost, explored: run.explored.value.length, ms: run.trace.ms }
   run.status.value = 'finished'
 
-  current.notifyFinish(ok, steps, cost)
-  disposeRunner(run)
+  // ปล่อยตัวรันออกจากรอบนี้ แต่รอให้ onFinish ทำเสร็จก่อนค่อยปิด — ความจำที่บันทึกตอนจบรอบจะได้ไม่หาย
+  if (run.runner === current) run.runner = null
+  void current
+    .finish(ok, steps, cost)
+    .catch(() => {})
+    .finally(() => current.dispose())
 }
 
 function createRunner(run: MazeRun): MazeRunner {
   return new MazeRunner(run.source.value, {
     timeoutMs: 5000,
+    memory: readMemory(run.memoryKey.value)?.data ?? null,
+    onMemory: (data) => writeMemory(run, data),
     onTrace: (tick) => {
       run.trace.method = tick.method
       run.trace.depth = tick.depth
@@ -441,6 +509,84 @@ async function startRun(run: MazeRun): Promise<void> {
   } catch (caught) {
     if (gen !== run.generation) return
     fail(run, caught instanceof Error ? caught.message : String(caught))
+  }
+}
+
+/**
+ * เดินหนึ่งรอบแบบไม่วาดภาพ ไม่รอนาฬิกา — ถามโปรแกรมรัว ๆ จนถึงทางออกหรือครบก้าว
+ * ใช้ worker ตัวใหม่ทุกรอบ สิ่งเดียวที่ข้ามรอบได้คือความจำที่โปรแกรมบันทึกเอง (เช่นกลิ่นของมด)
+ */
+async function trainOnce(run: MazeRun, alive: () => boolean): Promise<MazeTrainingRound | null> {
+  const maze = run.maze.value
+  const runner = new MazeRunner(run.source.value, {
+    timeoutMs: 5000,
+    memory: readMemory(run.memoryKey.value)?.data ?? null,
+    onMemory: (data) => writeMemory(run, data)
+  })
+
+  try {
+    const ready = await runner.start()
+    if (ready.mode !== 'step') throw new Error('การฝึกใช้ได้กับโปรแกรมแบบเดินทีละก้าวเท่านั้น — โปรแกรมที่วางแผนเห็นแผนที่ทั้งใบอยู่แล้ว ไม่มีอะไรให้ฝึก')
+
+    const visits: Record<string, number> = { [key(maze.start.row, maze.start.col)]: 1 }
+    let position = maze.start
+    let previous: Point | null = null
+    let cost = 0
+    let steps = 0
+    let ok = false
+    const walked: Point[] = [position]
+
+    runner.notifyStart(stateOf(run, position, 1, null, {}))
+
+    for (let step = 1; step <= run.stepLimit.value; step++) {
+      if (!alive()) return null
+
+      const { move } = await runner.step(stateOf(run, position, step, previous, { ...visits }))
+      if (!move || moveProblem(maze, position, move, step)) break
+
+      cost += stepCost(maze.grid, move.row, move.col)
+      steps = step
+      previous = position
+      position = move
+      visits[key(move.row, move.col)] = (visits[key(move.row, move.col)] ?? 0) + 1
+      walked.push(move)
+
+      if (same(move, maze.goal)) {
+        ok = true
+        break
+      }
+    }
+
+    await runner.finish(ok, steps, cost)
+    return { ok, cost, steps, shortcut: ok ? pathCost(maze.grid, eraseLoops(walked)) : null }
+  } finally {
+    runner.dispose()
+  }
+}
+
+async function train(run: MazeRun, training: MazeTraining, runs: number): Promise<void> {
+  if (training.running) return
+
+  training.session++
+  const session = training.session
+  const alive = () => training.running && training.session === session
+
+  training.running = true
+  training.total = runs
+  training.rounds = []
+  training.error = null
+
+  try {
+    for (let round = 0; round < runs && alive(); round++) {
+      const result = await trainOnce(run, alive)
+      if (result === null || !alive()) break
+
+      training.rounds = [...training.rounds, result]
+    }
+  } catch (caught) {
+    if (training.session === session) training.error = caught instanceof Error ? caught.message : String(caught)
+  } finally {
+    if (training.session === session) training.running = false
   }
 }
 
@@ -608,6 +754,24 @@ export function useMazeGame() {
 
   const stepLimit = computed(() => Math.min(60_000, maze.value.width * maze.value.height * 6))
 
+  const memory = ref<MazeMemoryInfo | null>(null)
+  const memoryKeyOf = computed(() => memoryKey(blocks.programKey.value))
+
+  const refreshMemory = () => {
+    const found = readMemory(memoryKeyOf.value)
+    memory.value = found
+      ? { label: typeof found.data.label === 'string' ? found.data.label : undefined, bytes: found.bytes }
+      : null
+  }
+
+  watch(memoryKeyOf, refreshMemory)
+  onMounted(refreshMemory)
+
+  /** โปรแกรมนี้จำอะไรข้ามรอบไหม — ไม่จำก็ฝึกไปก็ไม่เก่งขึ้น */
+  const learns = computed(() => usesBlock(blocks.program, ['remember', 'forget', 'maze.ant-scent']))
+
+  const training = reactive<MazeTraining>({ running: false, session: 0, total: 0, rounds: [], error: null })
+
   const run: MazeRun = {
     maze,
     status,
@@ -629,7 +793,34 @@ export function useMazeGame() {
     timeline: [],
     generation: 0,
     runner: null,
-    clear: () => clearRun()
+    clear: () => clearRun(),
+    memoryKey: memoryKeyOf,
+    memory
+  }
+
+  /** ฝึกรัว ๆ หลายรอบบนเขาวงกตที่เปิดอยู่ — ต้องไม่ได้กำลังเดินอยู่ */
+  function trainRuns(runs: number): Promise<void> {
+    stop()
+    const count = Math.min(1000, Math.max(1, Math.round(Number(runs) || 1)))
+    return train(run, training, count)
+  }
+
+  function stopTraining(): void {
+    training.running = false
+  }
+
+  function clearMemory(): void {
+    if (!import.meta.client) return
+
+    try {
+      localStorage.removeItem(memoryKeyOf.value)
+    } catch {
+      return
+    }
+
+    memory.value = null
+    training.rounds = []
+    training.total = 0
   }
 
   function clearRun() {
@@ -763,6 +954,14 @@ export function useMazeGame() {
     busy,
     editable,
     stepLimit,
+    memory,
+    learns,
+    training,
+    /** ราคาของทางที่ถูกที่สุดจริงบนเขาวงกตที่เปิดอยู่ — ไว้เทียบกับฝูงมด */
+    optimalCost: computed(() => solve(maze.value)?.cost ?? null),
+    train: trainRuns,
+    stopTraining,
+    clearMemory,
 
     build,
     setOption,

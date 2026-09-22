@@ -5,9 +5,14 @@ import { generate } from '~/game/blocks/codegen'
 import { importProgram } from '~/game/blocks/importer'
 import { normalize, type BlockProgram } from '~/game/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
-import { LineAgent, viewOf } from '~/game/line/agent'
+import { LineAgent, viewOf, type LineMemory } from '~/game/line/agent'
+import { BIRDS, DIMENSIONS, fly, readSwarm, type Swarm } from '~/game/line/swarm'
+import { SWARM_FOUND } from '~/data/algorithm-figures'
 import { RULES, playRule, type RuleId } from '~/game/line/rules'
 import { TOPICS } from '~/data/algorithms'
+import { createBlock } from '~/game/blocks/program'
+
+const numberBlock = (value: number) => Object.assign(createBlock('number'), { fields: { value } })
 import {
   COURSES,
   DECIDE_EVERY,
@@ -28,6 +33,10 @@ import {
   order,
   readingAt,
   sensorPoint,
+  turnAt,
+  MARKER_SIZE,
+  PX_PER_CM,
+  FINISH_RADIUS,
   type Drive,
   type Run
 } from '~/game/line/engine'
@@ -75,10 +84,12 @@ function coast(run: Run, drive: Drive, seconds: number): void {
   for (let frame = 0; frame < frames && !run.over; frame++) advance(run)
 }
 
-test('ทุกสนามเป็นวงปิด อยู่ในกรอบจอ และออกตัวบนเส้น', () => {
+test('ทุกสนามอยู่ในกรอบจอ ยาวพอ และออกตัวบนเส้น', () => {
   for (const course of COURSES) {
     const track = buildTrack(course)
-    assert.ok(track.length > 1500, `${course.id}: สั้นเกินไป (${track.length.toFixed(0)} px)`)
+    // เขาวงกตวัดจากจุดเริ่มถึงเส้นชัยตามทางที่สั้นที่สุด ไม่ใช่รอบวง จึงสั้นกว่าได้
+    const shortest = course.maze ? 1000 : 1500
+    assert.ok(track.length > shortest, `${course.id}: สั้นเกินไป (${track.length.toFixed(0)} px)`)
 
     for (const point of track.points) {
       assert.ok(point.x > 20 && point.x < VIEW.width - 20, `${course.id}: เส้นล้นขอบซ้ายขวา`)
@@ -210,23 +221,31 @@ test('ตัวอย่างทุกชุด บล็อก→โค้ด�
 const RESULTS: Record<string, Record<string, string>> = {
   starter: {
     oval: 'finished 13.95', wave: 'lost', sharp: 'lost', eight: 'lost',
-    gaps: 'lost', zones: 'speeding', final: 'speeding'
+    'rcj-gaps': 'lost', 'rcj-junctions': 'lost', robotrace: 'lost', 'line-maze': 'lost'
   },
   'bang-bang': {
     oval: 'finished 14.22', wave: 'finished 21.03', sharp: 'finished 17.97', eight: 'lost',
-    gaps: 'finished 16.43', zones: 'speeding', final: 'lost'
+    'rcj-gaps': 'finished 16.77', 'rcj-junctions': 'lost', robotrace: 'lost', 'line-maze': 'lost'
   },
   proportional: {
     oval: 'finished 11.13', wave: 'finished 16.65', sharp: 'finished 15.97', eight: 'finished 14.70',
-    gaps: 'timeout', zones: 'speeding', final: 'speeding'
+    'rcj-gaps': 'timeout', 'rcj-junctions': 'lost', robotrace: 'finished 11.28', 'line-maze': 'timeout'
   },
   pd: {
     oval: 'finished 7.58', wave: 'finished 11.12', sharp: 'finished 10.37', eight: 'finished 10.08',
-    gaps: 'timeout', zones: 'speeding', final: 'speeding'
+    'rcj-gaps': 'timeout', 'rcj-junctions': 'lost', robotrace: 'finished 7.82', 'line-maze': 'lost'
   },
   switching: {
     oval: 'finished 8.43', wave: 'finished 11.97', sharp: 'finished 11.42', eight: 'finished 11.17',
-    gaps: 'finished 10.30', zones: 'finished 16.80', final: 'finished 16.63'
+    'rcj-gaps': 'finished 10.32', 'rcj-junctions': 'lost', robotrace: 'finished 8.52', 'line-maze': 'lost'
+  },
+  'left-hand': {
+    oval: 'finished 13.32', wave: 'finished 19.13', sharp: 'finished 17.57', eight: 'lost',
+    'rcj-gaps': 'timeout', 'rcj-junctions': 'lost', robotrace: 'lost', 'line-maze': 'finished 23.28'
+  },
+  markers: {
+    oval: 'finished 13.32', wave: 'finished 18.77', sharp: 'finished 17.62', eight: 'finished 17.52',
+    'rcj-gaps': 'timeout', 'rcj-junctions': 'finished 15.02', robotrace: 'finished 13.43', 'line-maze': 'lost'
   }
 }
 
@@ -359,22 +378,302 @@ test('ภาพในหน้าความรู้ — สิ่งที่
 
 test('หน้าสลับพฤติกรรม — ตัวเลขตรงกับผลจริง และข้ออ้างเรื่อง PD กับกำลัง 90 เป็นจริง', () => {
   const text = TOPICS.find((topic) => topic.slug === 'behavior-switching')!.inGame
-  for (const number of ['8.43', '11.97', '11.42', '11.17', '10.30', '16.80', '16.63']) {
+  for (const number of ['8.43', '11.97', '11.42', '11.17', '10.32']) {
     assert.ok(text.includes(number), `หน้าสลับพฤติกรรมไม่ได้พูดถึง ${number} แล้ว`)
   }
 
   // PD บนสนามเส้นขาด — หมุนหาเส้นจนกลับหัววิ่งย้อนทาง แล้วหมดเวลา
-  const pd = play('pd', 'gaps')
+  const pd = play('pd', 'rcj-gaps')
   assert.equal(pd.over, 'timeout')
   assert.ok(pd.progress < pd.furthest - 50, 'PD ต้องวิ่งย้อนทาง ไม่ใช่จอดนิ่ง')
 
-  // เร่งกำลังปกติจาก 80 เป็น 90 แล้วหลุดบนสนามเส้นขาด
-  const faster = play('switching', 'gaps', (program) => {
-    const last = program.scripts['line.on-tick']!.at(-1)!
-    last.bodies.else![0]!.inputs.speed!.fields.value = 90
+  // เร่งกำลังปกติจาก 80 เป็น 90 แล้วข้ามเส้นขาดไม่รอดจนหมดเวลา
+  const faster = play('switching', 'rcj-gaps', (program) => {
+    program.scripts['line.on-tick']!.at(-1)!.inputs.speed!.fields.value = 90
   })
-  assert.equal(faster.over, 'lost')
+  assert.equal(faster.over, 'timeout')
+})
 
-  // ภาพประกอบบอกว่า PD จบเพราะเข้าโซนแดงเร็วเกิน
-  assert.equal(playRule('final', 'pd').over, 'speeding')
+test('ป้ายเขียววางก่อนถึงทางแยก ฝั่งเดียวกับที่ทางเลี้ยวไป — ทางตรงไปไม่มีป้าย', () => {
+  const course = COURSES.find((item) => item.id === 'rcj-junctions')!
+  const track = buildTrack(course)
+
+  assert.deepEqual(
+    course.branches!.map((branch) => turnAt(course, branch.at)),
+    ['left', null, 'right', null]
+  )
+  assert.deepEqual(track.markers.map((marker) => marker.side), ['left', 'right'])
+
+  for (const marker of track.markers) {
+    assert.ok(distanceToLine(track, marker) > LINE_WIDTH / 2 + MARKER_SIZE / 2, 'ป้ายต้องไม่ทับเส้น')
+  }
+})
+
+test('ทางแยกหลอกเซนเซอร์เห็นเหมือนเส้นดำ แต่ไม่นับเป็นทางของรอบ', () => {
+  const course = COURSES.find((item) => item.id === 'rcj-junctions')!
+  const track = buildTrack(course)
+  const deadEnd = course.branches![0]!.to
+
+  assert.ok(distanceToLine(track, deadEnd) < 1, 'ปลายทางตันต้องอยู่บนเส้นที่เซนเซอร์เห็น')
+  assert.ok(
+    track.points.every((at) => Math.hypot(at.x - deadEnd.x, at.y - deadEnd.y) > OFF_TRACK),
+    'ปลายทางตันต้องไกลจากทางของรอบพอที่หุ่นจะหลุดสนาม'
+  )
+})
+
+test('หน้าจำป้ายเขียว — ต้องจำ และต้องลืม ไม่งั้นเลี้ยวผิดทางแยก', () => {
+  // ตัวอย่างที่ไม่อ่านป้ายเลย วิ่งตรงเข้าทางตันที่ทางแยกแรก
+  const pd = play('pd', 'rcj-junctions')
+  assert.equal(pd.over, 'lost')
+  assert.ok(pd.strayed, 'PD ต้องหลุดเพราะเกาะทางตัน ไม่ใช่วิ่งออกไปบนพื้นขาว')
+
+  // ไม่จำ — ล้าง c ทุกครั้ง ป้ายกับทางแยกไม่เคยอยู่ใต้เซนเซอร์พร้อมกัน จึงเลยทางแยกแรกไป
+  const forgetful = play('markers', 'rcj-junctions', (program) => {
+    program.scripts['line.on-tick']!.unshift(createBlock('set-var'))
+    program.scripts['line.on-tick']![0]!.fields.name = 'c'
+    program.scripts['line.on-tick']![0]!.inputs.value = numberBlock(0)
+  })
+  assert.equal(forgetful.over, 'lost')
+  assert.ok(forgetful.strayed)
+
+  // จำไม่ลืม — ลบสองบล็อกนับถอยหลังทิ้ง แล้วไปเลี้ยวที่ทางแยกถัดไปที่ไม่มีป้าย
+  const stubborn = play('markers', 'rcj-junctions', (program) => {
+    program.scripts['line.on-tick']!.splice(2, 2)
+  })
+  assert.equal(stubborn.over, 'lost')
+  assert.ok(stubborn.strayed)
+  assert.ok(stubborn.time > forgetful.time, 'ต้องผ่านทางแยกแรกได้ก่อนแล้วค่อยพังที่ทางแยกที่สอง')
+
+  const text = TOPICS.find((topic) => topic.slug === 'marker-memory')!.inGame
+  for (const number of [pd.time, forgetful.time, stubborn.time, play('markers', 'rcj-junctions').time]) {
+    assert.ok(text.includes(number.toFixed(2)), `หน้าจำป้ายเขียวไม่ได้พูดถึง ${number.toFixed(2)} แล้ว`)
+  }
+})
+
+// ---------- สนามตามกติกาการแข่งจริง ----------
+
+const courseOf = (id: string) => COURSES.find((item) => item.id === id)!
+
+/** ทิศของท่อนที่ i (องศา) */
+const headingOf = (points: Array<{ x: number; y: number }>, index: number) => {
+  const from = points[index]!
+  const to = points[(index + 1) % points.length]!
+  return (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI
+}
+
+const turnBetween = (a: number, b: number) => Math.abs(((b - a + 540) % 360) - 180)
+
+test('RoboCupJunior เส้นขาด — ช่องว่างยาวไม่เกิน 20 ซม. อยู่บนทางตรง และมีทางตรงก่อนถึงอย่างน้อย 5 ซม.', () => {
+  const course = courseOf('rcj-gaps')
+  const points = course.points
+  const count = points.length
+  let gaps = 0
+
+  for (let index = 0; index < count; index++) {
+    if (course.paint![index] !== 'gap') continue
+    gaps++
+    const before = (index - 1 + count) % count
+    const after = (index + 1) % count
+    const length = Math.hypot(points[after]!.x - points[index]!.x, points[after]!.y - points[index]!.y)
+    const lead = Math.hypot(points[index]!.x - points[before]!.x, points[index]!.y - points[before]!.y)
+
+    assert.ok(length <= 20 * PX_PER_CM + 0.01, `ช่องว่างที่ท่อน ${index} ยาว ${(length / PX_PER_CM).toFixed(1)} ซม.`)
+    assert.ok(lead >= 5 * PX_PER_CM, `ก่อนช่องว่างที่ท่อน ${index} มีทางตรงแค่ ${(lead / PX_PER_CM).toFixed(1)} ซม.`)
+    assert.equal(course.paint![before], 'black')
+    assert.ok(turnBetween(headingOf(points, before), headingOf(points, index)) < 0.5, 'ช่องว่างต้องอยู่บนทางตรง')
+    assert.ok(turnBetween(headingOf(points, index), headingOf(points, after)) < 0.5, 'ช่องว่างต้องอยู่บนทางตรง')
+  }
+
+  assert.ok(gaps >= 3)
+})
+
+test('RoboCupJunior ทางแยก — ทุกทางแยกตั้งฉาก', () => {
+  const course = courseOf('rcj-junctions')
+  for (const branch of course.branches!) {
+    const at = course.points[branch.at]!
+    const incoming = headingOf(course.points, (branch.at - 1 + course.points.length) % course.points.length)
+    const spur = (Math.atan2(branch.to.y - at.y, branch.to.x - at.x) * 180) / Math.PI
+    const angle = turnBetween(incoming, spur)
+    assert.ok(Math.abs(angle) < 0.5 || Math.abs(angle - 90) < 0.5, `ทางแยกที่จุด ${branch.at} ทำมุม ${angle.toFixed(1)}°`)
+  }
+})
+
+test('Robotrace — จุดตัดตั้งฉาก มีทางตรงก่อนและหลังอย่างน้อย 10 ซม. และทุกโค้งรัศมีไม่ต่ำกว่า 10 ซม.', () => {
+  const course = courseOf('robotrace')
+  const points = course.points
+  const count = points.length
+  // เส้นกว้าง 19 มม. ในกติกา = LINE_WIDTH พิกเซลในเกม
+  const pxPerCm = LINE_WIDTH / 1.9
+
+  // ทางทแยงสองเส้นที่ผ่านกลางสนาม
+  const through = [...Array(count).keys()].filter((index) => {
+    const from = points[index]!
+    const to = points[(index + 1) % count]!
+    const t = ((480 - from.x) * (to.x - from.x) + (300 - from.y) * (to.y - from.y)) / ((to.x - from.x) ** 2 + (to.y - from.y) ** 2)
+    return t > 0 && t < 1 && Math.hypot(from.x + (to.x - from.x) * t - 480, from.y + (to.y - from.y) * t - 300) < 1
+  })
+  assert.equal(through.length, 2, 'ต้องมีเส้นผ่านจุดตัดกลางสนามสองเส้นพอดี')
+  assert.ok(Math.abs(turnBetween(headingOf(points, through[0]!), headingOf(points, through[1]!)) - 90) <= 5, 'จุดตัดต้องตั้งฉาก ±5°')
+  for (const index of through) {
+    for (const end of [points[index]!, points[(index + 1) % count]!]) {
+      assert.ok(Math.hypot(end.x - 480, end.y - 300) >= 10 * pxPerCm, 'ทางตรงรอบจุดตัดต้องยาวอย่างน้อย 10 ซม.')
+    }
+  }
+
+  // รัศมีของวงกลมที่ผ่านสามจุดติดกัน — ทางตรงได้รัศมีอนันต์
+  for (let index = 0; index < count; index++) {
+    const a = points[(index - 1 + count) % count]!
+    const b = points[index]!
+    const c = points[(index + 1) % count]!
+    const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    if (Math.abs(cross) < 1e-6) continue
+    const radius = (Math.hypot(b.x - a.x, b.y - a.y) * Math.hypot(c.x - b.x, c.y - b.y) * Math.hypot(c.x - a.x, c.y - a.y)) / (2 * Math.abs(cross))
+    assert.ok(radius >= 10 * pxPerCm, `โค้งที่จุด ${index} รัศมี ${(radius / pxPerCm).toFixed(1)} ซม.`)
+  }
+})
+
+test('Robotrace — มีเครื่องหมายโค้งทุกจุดที่เข้าหรือออกโค้ง และไม่มีที่อื่น', () => {
+  const course = courseOf('robotrace')
+  const points = course.points
+  const count = points.length
+  // โค้งถูกซอยเป็นท่อนสั้น ๆ ส่วนทางตรงเป็นท่อนเดียวยาว ๆ — แยกกันด้วยความยาวของท่อน
+  const curved = (index: number) => {
+    const from = points[index]!
+    const to = points[(index + 1) % count]!
+    return Math.hypot(to.x - from.x, to.y - from.y) < 40
+  }
+  const expected = [...Array(count).keys()].filter((index) => curved((index - 1 + count) % count) !== curved(index))
+
+  assert.deepEqual([...course.corners!].sort((a, b) => a - b), expected.sort((a, b) => a - b))
+
+  const track = buildTrack(course)
+  for (const marker of track.markers) {
+    assert.equal(marker.kind, 'corner')
+    assert.ok(distanceToLine(track, marker) > LINE_WIDTH / 2 + MARKER_SIZE / 2 - 0.5, 'เครื่องหมายต้องไม่ทับเส้น')
+  }
+})
+
+test('เขาวงกตบนเส้น — ตามคู่มือ Pololu: หักมุมฉาก ไม่มีวงวน และเส้นชัยเป็นวงกลมกว้างสี่เท่าของเส้น', () => {
+  const maze = courseOf('line-maze').maze!
+  for (const [from, to] of maze.lines) assert.ok(from.x === to.x || from.y === to.y, 'ทุกเส้นต้องเป็นแนวนอนหรือแนวตั้ง')
+
+  // ไม่มีวงวน = กราฟของทางแยกเป็นต้นไม้ — จำนวนท่อนน้อยกว่าจำนวนทางแยกอยู่หนึ่ง
+  const graph = buildTrack(courseOf('line-maze')).maze!
+  const key = (p: { x: number; y: number }) => `${p.x},${p.y}`
+  const nodes = new Set(graph.edges.flatMap((edge) => [key(edge.from), key(edge.to)]))
+  assert.equal(graph.edges.length, nodes.size - 1)
+
+  assert.equal(FINISH_RADIUS * 2, LINE_WIDTH * 4)
+})
+
+test('หน้ามือซ้ายแตะกำแพงบนเส้น — ตัวเลขตรงกับผลจริง และมือขวาเข้าทางตันน้อยกว่าบนเขาวงกตนี้', () => {
+  const left = play('left-hand', 'line-maze')
+  const right = play('left-hand', 'line-maze', (program) => {
+    const rule = program.scripts['line.on-tick']![0]!
+    rule.inputs.cond!.fields.sensor = '4'
+    rule.bodies.then![0]!.inputs.left!.fields.value = 60
+    rule.bodies.then![0]!.inputs.right!.fields.value = -40
+  })
+
+  assert.equal(left.over, 'finished')
+  assert.equal(right.over, 'finished')
+  assert.ok(right.time < left.time)
+
+  const text = TOPICS.find((topic) => topic.slug === 'line-maze-left-hand')!.inGame
+  for (const time of [left.time, right.time]) assert.ok(text.includes(time.toFixed(2)), `หน้ามือซ้ายไม่ได้พูดถึง ${time.toFixed(2)}`)
+})
+
+// ---------- ฝูงนก (PSO) ----------
+
+/** Math.random ที่ล็อกเมล็ดไว้ — ฝูงนกสุ่มเอง ต้องล็อกถึงจะวัดซ้ำได้ */
+function withSeededRandom<T>(seed: number, work: () => T): T {
+  const real = Math.random
+  let state = seed
+
+  Math.random = () => {
+    state |= 0
+    state = (state + 0x6d2b79f5) | 0
+    let t = Math.imul(state ^ (state >>> 15), 1 | state)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
+  try {
+    return work()
+  } finally {
+    Math.random = real
+  }
+}
+
+/** ฝึกฝูงนก — ความจำส่งต่อข้ามรอบแบบเดียวกับที่ worker ทำ คืนเวลาของแต่ละรอบ (null = ไม่ครบรอบ) */
+function trainSwarm(courseId: string, rounds: number): { times: Array<number | null>; swarm: Swarm } {
+  let memory: LineMemory | null = null
+  const times: Array<number | null> = []
+
+  for (let round = 0; round < rounds; round++) {
+    const agent = agentOf('swarm')
+    agent.memory = memory
+    agent.saveMemory = (data) => {
+      memory = data
+      agent.memory = data
+    }
+
+    const run = createRun({ courseId })
+    agent.onStart(viewOf(run, 500))
+
+    let previous: Drive = { left: 0, right: 0 }
+    while (!run.over) {
+      previous = agent.step(viewOf(run, 500)) ?? previous
+      order(run, previous)
+      for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
+    }
+
+    agent.onFinish(viewOf(run, 500))
+    times.push(run.over === 'finished' ? run.time : null)
+  }
+
+  return { times, swarm: readSwarm((memory as LineMemory | null)?.swarm)! }
+}
+
+test('ฝูงนก — ฝึก 100 รอบแล้วเร็วกว่า PD ที่คนจูนทุกครั้ง และตัวเลขในหน้าความรู้ยังตรง', () => {
+  const pd = play('pd', 'sharp').time
+  const bests: number[] = []
+  const earlies: number[] = []
+
+  for (let trial = 1; trial <= 5; trial++) {
+    const { times, swarm } = withSeededRandom(20260922 + trial, () => trainSwarm('sharp', 100))
+    assert.ok(swarm.bestScore !== null && swarm.bestScore < pd, `ครั้งที่ ${trial}: ${swarm.bestScore} ไม่ดีกว่า PD (${pd})`)
+    bests.push(swarm.bestScore!)
+    earlies.push(Math.min(...times.slice(0, 10).filter((time): time is number => time !== null)))
+
+    // ภาพในหน้าความรู้วิ่งด้วยค่าที่ครั้งแรกหาเจอ
+    if (trial === 1) {
+      assert.deepEqual(
+        swarm.best!.map((value) => Math.round(value * 100) / 100),
+        [SWARM_FOUND.power, SWARM_FOUND.kp, SWARM_FOUND.kd]
+      )
+    }
+  }
+
+  const average = (list: number[]) => list.reduce((sum, value) => sum + value, 0) / list.length
+  const text = TOPICS.find((topic) => topic.slug === 'particle-swarm')!.inGame
+  for (const number of [pd, average(bests), Math.min(...bests), average(earlies), play('pd', 'sharp', (program) => {
+    program.scripts['line.on-tick']!.at(-1)!.inputs.speed!.fields.value = 100
+  }).time]) {
+    assert.ok(text.includes(number.toFixed(2)), `หน้าฝูงนกไม่ได้พูดถึง ${number.toFixed(2)} แล้ว`)
+  }
+})
+
+test('ฝูงนก — ความจำเสียหรือรูปร่างผิดถือว่ายังไม่มีฝูง แล้วเริ่มฝูงใหม่ได้', () => {
+  assert.equal(readSwarm(null), null)
+  assert.equal(readSwarm({ birds: [] }), null)
+  assert.equal(readSwarm({ birds: 'x', best: null, bestScore: null, turn: 0, current: 0 }), null)
+
+  const swarm = withSeededRandom(1, () => fly(null, Math.random))
+  assert.equal(swarm.birds.length, BIRDS)
+  assert.equal(swarm.turn, 1)
+  for (const bird of swarm.birds) {
+    DIMENSIONS.forEach(({ min, max }, d) => assert.ok(bird.at[d]! >= min && bird.at[d]! <= max))
+  }
+  assert.deepEqual(readSwarm(JSON.parse(JSON.stringify(swarm))), swarm)
 })

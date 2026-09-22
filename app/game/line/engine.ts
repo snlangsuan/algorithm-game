@@ -12,6 +12,8 @@
  * สนามไม่มีการสุ่มเลย โปรแกรมเดิมบนสนามเดิมจึงได้เวลาเดิมเป๊ะทุกครั้ง
  */
 
+import { trace } from './trace'
+
 export interface Point {
   x: number
   y: number
@@ -68,39 +70,48 @@ export const OFF_TRACK = 60
 export const TIME_LIMIT = 90
 
 /**
- * สีของเส้นแต่ละท่อน
- * ดำ = เส้นปกติ · แดง = โซนจำกัดความเร็ว (เซนเซอร์ยังเห็นเป็นเส้น แต่บอกสีได้ด้วย) · เว้น = เส้นขาด มองไม่เห็นอะไรเลย
+ * สีของเส้นแต่ละท่อน — ดำ = เส้นปกติ · เว้น = เส้นขาด มองไม่เห็นอะไรเลย
  */
-export type Paint = 'black' | 'red' | 'gap'
+export type Paint = 'black' | 'gap'
 
-export const PAINTS: Paint[] = ['black', 'red', 'gap']
+export const PAINTS: Paint[] = ['black', 'gap']
 
 export const PAINT_LABEL: Record<Paint, string> = {
   black: 'เส้นดำ',
-  red: 'โซนแดง',
   gap: 'เส้นขาด'
 }
 
-/** ในโซนแดงวิ่งเร็วได้ไม่เกินเท่านี้ (พิกเซลต่อวินาที) — เท่ากับกำลังมอเตอร์ 40% */
-export const ZONE_LIMIT = 120
+/**
+ * มาตราส่วนของสนามตามกติกา RoboCupJunior — แผ่นสนามจริงกว้าง 30 ซม. ในเกมคือ TILE พิกเซล
+ * สนามทั้งผืน 960 × 600 จึงเท่ากับแผ่น 8 × 5 แผ่น
+ */
+export const TILE = 120
+
+export const PX_PER_CM = TILE / 30
 
 /**
- * เซนเซอร์ตัวกลางเข้าโซนแดงมาแล้วกี่พิกเซลถึงเริ่มจับความเร็ว — มอเตอร์ชะลอทันทีไม่ได้
- * ระยะนี้คือเวลาที่ให้เบรกหลังจากเซนเซอร์เห็นสีแดงครั้งแรก
+ * ป้ายเขียวบอกทางที่ทางแยก — แบบเดียวกับ RoboCupJunior Rescue Line
+ * วางไว้ข้างเส้นก่อนถึงทางแยก ฝั่งเดียวกับที่ทางของหุ่นเลี้ยวไป ไม่มีป้ายแปลว่าตรงไป
  *
- * จับที่เซนเซอร์ ไม่ใช่ที่ตัวหุ่น เพราะหุ่นรู้แค่สิ่งที่เซนเซอร์เห็น
- * ถ้าจับที่ตัว หุ่นจะไม่มีทางรู้ว่าตัวเองพ้นโซนหรือยัง ทั้งที่เซนเซอร์เห็นเส้นดำไปแล้ว
+ * ป้ายเป็นสี่เหลี่ยมจัตุรัสขนาด MARKER_SIZE ขอบในห่างขอบเส้น MARKER_CLEAR และขอบหน้าห่างขอบทางแยก MARKER_CLEAR
+ * ยาวพอที่หุ่นกำลังเต็มจะยังเห็นอย่างน้อยหนึ่งครั้ง — ตัดสินใจครั้งละ 2 เฟรม ไปได้ไม่เกิน 10 พิกเซล
  */
-export const ZONE_GRACE = 60
+export const MARKER_SIZE = 16
 
-/** จบรอบได้สี่แบบ — ครบรอบ หลุดสนาม หมดเวลา หรือวิ่งเร็วเกินในโซนแดง */
-export type Outcome = 'finished' | 'lost' | 'timeout' | 'speeding'
+export const MARKER_CLEAR = 2
+
+/** ป้ายอยู่ฝั่งไหนของเส้น เมื่อมองตามทิศที่หุ่นวิ่ง */
+export type Side = 'left' | 'right'
+
+export const SIDE_LABEL: Record<Side, string> = { left: 'ซ้าย', right: 'ขวา' }
+
+/** จบรอบได้สามแบบ — ครบรอบ หลุดสนาม หรือหมดเวลา */
+export type Outcome = 'finished' | 'lost' | 'timeout'
 
 export const OUTCOME_LABEL: Record<Outcome, string> = {
   finished: 'ครบรอบ',
   lost: 'หลุดเส้น',
-  timeout: 'หมดเวลา',
-  speeding: 'วิ่งเร็วเกินในโซนแดง'
+  timeout: 'หมดเวลา'
 }
 
 /** คำสั่งหนึ่งครั้ง — กำลังมอเตอร์ซ้ายกับขวา เป็นเปอร์เซ็นต์ ติดลบคือหมุนถอยหลัง */
@@ -130,10 +141,226 @@ export interface Course {
   smooth: boolean
   /** สีของท่อนที่เริ่มจากจุดนั้นไปจุดถัดไป — ไม่ใส่ก็ดำทั้งสนาม */
   paint?: Paint[]
+  /**
+   * ทางแยกหลอก — เส้นดำที่แตกออกจากทางของหุ่นตรงจุดที่ at แล้วไปสิ้นสุดเฉย ๆ
+   * เข้าผิดทางก็วิ่งออกนอกทางของตัวเองจนหลุดสนาม ป้ายเขียวคำนวณจากทิศที่ทางจริงเลี้ยวไปเอง
+   */
+  branches?: Branch[]
+  /**
+   * จุดที่ความโค้งเปลี่ยน — เข้าโค้ง ออกโค้ง หรือเปลี่ยนรัศมี
+   * แต่ละจุดมีเครื่องหมายวางไว้ข้างซ้ายของเส้น แบบสนาม Robotrace กับ UKMARS
+   */
+  corners?: number[]
+  /** เขาวงกตบนเส้น — มีแล้วสนามนี้ไม่ใช่วงปิด points กับ paint ไม่ถูกใช้ */
+  maze?: LineMaze
   /** สนามโจทย์ยาก — จัดกลุ่มแยกในรายการเลือกสนาม */
   challenge?: boolean
   /** สนามที่ผู้เล่นวาดเอง */
   custom?: boolean
+}
+
+/**
+ * เขาวงกตบนเส้นแบบคู่มือของ Pololu — เส้นเทปบนตาราง หักมุมฉากเท่านั้น ไม่มีวงวน
+ * มีจุดเริ่มกับเส้นชัยเป็นวงกลมดำ ทางที่เหลือเป็นทางตันทั้งหมด
+ */
+export interface LineMaze {
+  /** จุดออกตัว (ต้องอยู่บนเส้น) กับทิศที่หันตอนออกตัว เป็นองศาบนจอ */
+  start: Point
+  heading: number
+  /** เส้นทุกเส้น เป็นท่อนตรงแนวนอนหรือแนวตั้ง — ปลายของเส้นหนึ่งไปแตะกลางอีกเส้นได้ */
+  lines: Array<[Point, Point]>
+  /** ศูนย์กลางของวงกลมดำที่เป็นเส้นชัย — ต้องเป็นปลายของเส้นใดเส้นหนึ่ง */
+  finish: Point
+}
+
+/** วงกลมเส้นชัยกว้าง 3 นิ้ว เส้นเทปกว้าง 3/4 นิ้ว — รัศมีจึงเท่ากับความกว้างเส้นสองเท่า */
+export const FINISH_RADIUS = 2 * LINE_WIDTH
+
+export interface Branch {
+  /** แตกออกจากจุดที่เท่าไรของสนาม — ต้องเป็นมุมของสนามแบบเส้นตรง (smooth: false) */
+  at: number
+  /** ปลายของทางแยก ลากเป็นเส้นตรงจากจุดแยกไปถึงตรงนี้ */
+  to: Point
+}
+
+/**
+ * RoboCupJunior Rescue Line — เส้นขาดบนแผ่นสนาม
+ *
+ * ตามกติกาฉบับ 2025 ข้อ 3.3: เส้นขาดอยู่บนทางตรงเท่านั้น ยาวไม่เกิน 20 ซม.
+ * และก่อนถึงช่องว่างทุกช่องต้องมีทางตรงอย่างน้อย 5 ซม. · ทางโค้งเป็นแผ่นโค้งหนึ่งในสี่วงกลม
+ * ที่ต่อจากกึ่งกลางขอบแผ่นหนึ่งไปอีกขอบหนึ่ง จึงมีรัศมีครึ่งแผ่นพอดี
+ */
+const RCJ_GAPS_TRACE = trace({ x: 180, y: 540 }, 0)
+  .forward(210)
+  .gap(15 * PX_PER_CM)
+  .forward(170)
+  .gap(20 * PX_PER_CM)
+  .forward(140)
+  .arc(TILE / 2, 90)
+  .forward(80)
+  .gap(15 * PX_PER_CM)
+  .forward(220)
+  .arc(TILE / 2, 90)
+  .forward(240)
+  .turn(90)
+  .forward(2 * TILE)
+  .turn(-90)
+  .forward(200)
+  .gap(18 * PX_PER_CM)
+  .forward(88)
+  .arc(TILE / 2, 90)
+  .forward(180)
+  .turn(90)
+  .close()
+
+/**
+ * RoboCupJunior Rescue Line — ทางแยกกับป้ายเขียว
+ *
+ * ตามกติกาฉบับ 2025 ข้อ 3.6: ทางแยกตั้งฉากเสมอ ป้ายเขียววางก่อนถึงทางแยก
+ * ป้ายอยู่ฝั่งไหนให้เลี้ยวฝั่งนั้น ไม่มีป้ายให้ตรงไป · ทางที่ไม่ได้เลือกในเกมนี้เป็นทางตันยาวหนึ่งแผ่น
+ */
+const RCJ_JUNCTIONS_TRACE = trace({ x: 180, y: 540 }, 0)
+  .forward(3 * TILE)
+  .mark('left')
+  .turn(90)
+  .forward(TILE)
+  .mark('straight-1')
+  .forward(TILE)
+  .mark('right')
+  .turn(-90)
+  .forward(2 * TILE)
+  .arc(TILE / 2, 90)
+  .forward(TILE)
+  .arc(TILE / 2, 90)
+  .forward(3 * TILE)
+  .mark('straight-2')
+  .forward(2 * TILE)
+  .turn(90)
+  .forward(4 * TILE)
+  .turn(90)
+  .close()
+
+const RCJ_GAPS: Course = {
+  id: 'rcj-gaps',
+  name: 'RoboCupJunior · เส้นขาด',
+  note: 'สนามแผ่นกระเบื้องแบบ RoboCupJunior Rescue Line ตามกติกาข้อ 3.3 — เส้นขาดสี่ช่วงบนทางตรงเท่านั้น ยาว 15–20 ซม. และมีทางตรงอย่างน้อย 5 ซม. ก่อนทุกช่อง ต้องแยกให้ออกว่า "หลุดเพราะเลี้ยวไม่ทัน" กับ "เส้นขาดไปเฉย ๆ" ต่างกันยังไง · ย่อส่วน 1 ซม. = 4 พิกเซล',
+  challenge: true,
+  smooth: false,
+  points: RCJ_GAPS_TRACE.points,
+  paint: RCJ_GAPS_TRACE.paint
+}
+
+const RCJ_JUNCTIONS: Course = {
+  id: 'rcj-junctions',
+  name: 'RoboCupJunior · ทางแยก',
+  note: 'สนามแผ่นกระเบื้องแบบ RoboCupJunior Rescue Line ตามกติกาข้อ 3.6 — ทางแยกตั้งฉากสี่แห่ง ป้ายเขียวข้างเส้นบอกว่าต้องเลี้ยวทางไหน ไม่มีป้ายคือตรงไป เลี้ยวผิดก็เข้าทางตัน · ป้ายอยู่ก่อนถึงทางแยก พอถึงทางแยกจริงหุ่นก็เลยป้ายไปแล้ว โปรแกรมจึงต้องจำไว้ในตัวแปร · ย่อส่วน 1 ซม. = 4 พิกเซล',
+  challenge: true,
+  smooth: false,
+  points: RCJ_JUNCTIONS_TRACE.points,
+  branches: [
+    // เลี้ยวซ้าย — ทางตรงไปคือทางตัน
+    { at: RCJ_JUNCTIONS_TRACE.marks.left!, to: { x: 540 + TILE, y: 540 } },
+    // ตรงไป ไม่มีป้าย แต่ทางตันแยกไปทางซ้ายมือ ฝั่งเดียวกับป้ายที่เพิ่งผ่านมา
+    // โปรแกรมที่จำป้ายไว้ตลอดไปไม่ยอมลืม จะเลี้ยวเข้าตรงนี้
+    { at: RCJ_JUNCTIONS_TRACE.marks['straight-1']!, to: { x: 540 - TILE, y: 420 } },
+    // เลี้ยวขวา — ทางตรงขึ้นไปคือทางตัน
+    { at: RCJ_JUNCTIONS_TRACE.marks.right!, to: { x: 540, y: 300 - TILE } },
+    // ตรงไป ไม่มีป้าย — ทางที่แยกลงไปทางซ้ายมือคือทางตัน
+    { at: RCJ_JUNCTIONS_TRACE.marks['straight-2']!, to: { x: 420, y: 60 + TILE } }
+  ]
+}
+
+/**
+ * สนามแข่งความเร็วแบบ Robotrace (All Japan Micromouse Contest) กับ UKMARS Line Follower
+ *
+ * ย่อส่วนจากกติกาที่เส้นกว้าง 19 มม. — เส้นในเกมกว้าง 12 พิกเซล จึงราว 6.3 พิกเซลต่อ 1 ซม.
+ * ทำตามข้อกำหนดสามข้อ: จุดตัดตั้งฉาก 90° และมีทางตรงก่อนกับหลังจุดตัดอย่างน้อย 10 ซม.
+ * ทุกโค้งรัศมีไม่ต่ำกว่า 10 ซม. และมีเครื่องหมายข้างซ้ายของเส้นทุกจุดที่ความโค้งเปลี่ยน
+ *
+ * รูปร่างเป็นเลขแปดที่สองวงไม่เท่ากัน แต่ละวงเลี้ยวรวม 270° ด้วยโค้ง 90° สามโค้งคั่นด้วยทางตรง
+ * วงขวาโค้งแคบรัศมี RACE_TIGHT (ราว 10.5 ซม. ใกล้ขีดต่ำสุดของกติกา) วงซ้ายโค้งกว้างรัศมี RACE_WIDE
+ * ทางตรงในวงยาวพอดีให้กึ่งกลางวงอยู่บนเส้นแนวนอนผ่านจุดตัด สองวงจึงสมมาตร และเส้นทแยงตัดกันเป็นมุมฉาก
+ */
+const RACE_TIGHT = 66
+
+const RACE_WIDE = 100
+
+/** ทางทแยงจากจุดตัดถึงโค้งแรกของแต่ละวง */
+const RACE_REACH_RIGHT = 210
+
+const RACE_REACH_LEFT = 180
+
+const RACE_TRACE = trace({ x: 480 - RACE_REACH_LEFT / Math.SQRT2, y: 300 + RACE_REACH_LEFT / Math.SQRT2 }, -45)
+  .forward(RACE_REACH_LEFT + RACE_REACH_RIGHT)
+  .mark('r1')
+  .arc(RACE_TIGHT, -90)
+  .mark('r2')
+  .forward(144)
+  .mark('r3')
+  .arc(RACE_TIGHT, -90)
+  .mark('r4')
+  .forward(144)
+  .mark('r5')
+  .arc(RACE_TIGHT, -90)
+  .mark('r6')
+  .forward(RACE_REACH_RIGHT + RACE_REACH_LEFT)
+  .mark('l1')
+  .arc(RACE_WIDE, 90)
+  .mark('l2')
+  .forward(80)
+  .mark('l3')
+  .arc(RACE_WIDE, 90)
+  .mark('l4')
+  .forward(80)
+  .mark('l5')
+  .arc(RACE_WIDE, 90)
+  .close()
+
+const ROBOTRACE: Course = {
+  id: 'robotrace',
+  name: 'Robotrace · เลขแปดแข่งความเร็ว',
+  note: 'สนามแข่งความเร็วแบบ Robotrace ของญี่ปุ่นกับ UKMARS ของอังกฤษ — จุดตัดตั้งฉากกลางสนามที่ห้ามเลี้ยว วงขวาโค้งแคบเกือบถึงรัศมีต่ำสุด 10 ซม. ตามกติกา วงซ้ายโค้งกว้างกว่า และมีเครื่องหมายข้างซ้ายของเส้นทุกจุดที่เข้าหรือออกโค้ง ซึ่งหุ่นแข่งจริงใช้แบ่งสนามเป็นช่วง ๆ · ย่อส่วนจากเส้นกว้าง 19 มม.',
+  challenge: true,
+  smooth: false,
+  points: RACE_TRACE.points,
+  corners: [...['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'l1', 'l2', 'l3', 'l4', 'l5'].map((name) => RACE_TRACE.marks[name]!), 0]
+}
+
+/**
+ * เขาวงกตบนเส้นแบบคู่มือ Pololu — เส้นบนตาราง หักมุมฉาก ไม่มีวงวน เส้นชัยเป็นวงกลมดำ
+ *
+ * Pololu ใช้ตารางห่าง 3 นิ้วกับหุ่น 3pi ที่ตัวเล็กกว่าช่อง แต่หุ่นในเกมมีแถวเซนเซอร์ยื่นหน้าล้อ 26 พิกเซล
+ * ตารางจึงขยายเป็นช่องละ TILE พิกเซลให้หุ่นมีที่เลี้ยว — รูปแบบอื่นเป็นไปตามคู่มือทั้งหมด
+ */
+const node = (col: number, row: number): Point => ({ x: TILE / 2 + col * TILE, y: TILE / 2 + row * TILE })
+
+const LINE_MAZE: Course = {
+  id: 'line-maze',
+  name: 'เขาวงกตบนเส้น (Pololu)',
+  note: 'เขาวงกตแบบที่ Pololu ใช้แข่งหุ่นเดินตามเส้น — เส้นบนตารางหักมุมฉาก มีสามแยก สี่แยก และทางตันหลายทาง ไม่มีวงวน เส้นชัยคือวงกลมดำ · ไม่มีป้ายบอกทาง หุ่นต้องเลือกเองทุกทางแยก และกลับหลังเองเมื่อเจอทางตัน',
+  challenge: true,
+  smooth: false,
+  points: [],
+  maze: {
+    start: node(0, 4),
+    heading: -90,
+    finish: node(7, 2),
+    lines: [
+      [node(0, 4), node(0, 1)],
+      [node(0, 1), node(2, 1)],
+      [node(2, 1), node(2, 0)],
+      [node(0, 3), node(2, 3)],
+      [node(2, 3), node(2, 2)],
+      [node(2, 3), node(4, 3)],
+      [node(4, 3), node(4, 4)],
+      [node(4, 4), node(6, 4)],
+      [node(4, 3), node(4, 1)],
+      [node(4, 1), node(6, 1)],
+      [node(6, 1), node(6, 0)],
+      [node(6, 1), node(6, 2)],
+      [node(6, 2), node(7, 2)]
+    ]
+  }
 }
 
 export const COURSES: Course[] = [
@@ -225,103 +452,11 @@ export const COURSES: Course[] = [
     ]
   },
 
-  // ---------- โจทย์ยาก ----------
-  {
-    id: 'gaps',
-    name: 'เส้นขาด',
-    note: 'เส้นหายไปเป็นช่วง ๆ ทั้งบนทางตรงและทางโค้งอ่อน ๆ — กฎที่หมุนตัวหาเส้นทุกครั้งที่มองไม่เห็น จะหมุนออกนอกทางตรงช่องว่างแรก ต้องแยกให้ออกว่า "หลุดเพราะเลี้ยวไม่ทัน" กับ "เส้นขาดไปเฉย ๆ" ต่างกันยังไง',
-    challenge: true,
-    smooth: true,
-    points: [
-      { x: 440, y: 520 },
-      { x: 540, y: 520 },
-      { x: 650, y: 520 },
-      { x: 780, y: 520 },
-      { x: 870, y: 450 },
-      { x: 890, y: 300 },
-      { x: 870, y: 150 },
-      { x: 780, y: 80 },
-      { x: 660, y: 80 },
-      { x: 560, y: 80 },
-      { x: 420, y: 80 },
-      { x: 320, y: 80 },
-      { x: 180, y: 80 },
-      { x: 90, y: 150 },
-      { x: 74, y: 240 },
-      { x: 74, y: 350 },
-      { x: 90, y: 450 },
-      { x: 180, y: 520 },
-      { x: 300, y: 520 }
-    ],
-    paint: [
-      'black', 'gap', 'black', 'black', 'black', 'black', 'black', 'black', 'gap', 'black',
-      'gap', 'black', 'black', 'black', 'gap', 'black', 'black', 'black', 'black'
-    ]
-  },
-  {
-    id: 'zones',
-    name: 'โซนแดง',
-    note: `ถนนคดเคี้ยวที่มีเส้นสีแดงสามช่วง ในช่วงสีแดงห้ามวิ่งเร็วเกิน ${ZONE_LIMIT} พิกเซลต่อวินาที (กำลังราว 40) — เกินเมื่อไรจบรอบทันที ต้องใช้บล็อกดูสีเส้น และต้องชะลอตั้งแต่เซนเซอร์เห็นสีแดง เพราะมอเตอร์ชะลอทันทีไม่ได้`,
-    challenge: true,
-    smooth: true,
-    points: [
-      { x: 200, y: 530 },
-      { x: 300, y: 530 },
-      { x: 390, y: 440 },
-      { x: 480, y: 520 },
-      { x: 620, y: 540 },
-      { x: 720, y: 450 },
-      { x: 860, y: 460 },
-      { x: 880, y: 320 },
-      { x: 760, y: 300 },
-      { x: 700, y: 200 },
-      { x: 820, y: 130 },
-      { x: 740, y: 60 },
-      { x: 560, y: 110 },
-      { x: 480, y: 240 },
-      { x: 380, y: 140 },
-      { x: 240, y: 70 },
-      { x: 120, y: 140 },
-      { x: 200, y: 280 },
-      { x: 80, y: 400 },
-      { x: 100, y: 530 }
-    ],
-    paint: [
-      'black', 'red', 'red', 'black', 'black', 'black', 'black', 'black', 'black', 'red',
-      'red', 'black', 'black', 'black', 'red', 'red', 'black', 'black', 'black', 'black'
-    ]
-  },
-  {
-    id: 'final',
-    name: 'สนามรวมโจทย์',
-    note: 'เลขแปดที่มีทุกอย่างรวมกัน — จุดตัดกลางสนาม เส้นขาดสองช่วง และโซนแดงสองช่วงที่พาเข้าจุดตัดพอดี โปรแกรมเดียวต้องรู้ว่าตอนไหนควรทำอะไร',
-    challenge: true,
-    smooth: true,
-    points: [
-      { x: 780, y: 510 },
-      { x: 900, y: 420 },
-      { x: 905, y: 350 },
-      { x: 905, y: 250 },
-      { x: 900, y: 180 },
-      { x: 780, y: 90 },
-      { x: 620, y: 160 },
-      { x: 480, y: 300 },
-      { x: 340, y: 440 },
-      { x: 180, y: 510 },
-      { x: 60, y: 420 },
-      { x: 55, y: 350 },
-      { x: 55, y: 250 },
-      { x: 60, y: 180 },
-      { x: 180, y: 90 },
-      { x: 340, y: 160 },
-      { x: 480, y: 300 },
-      { x: 620, y: 440 }
-    ],
-    paint: [
-      'black', 'black', 'gap', 'black', 'black', 'red', 'red', 'black', 'black', 'black',
-      'black', 'gap', 'black', 'black', 'red', 'red', 'black', 'black'
-    ]
-  }
+  // ---------- สนามตามกติกาการแข่งจริง ----------
+  RCJ_GAPS,
+  RCJ_JUNCTIONS,
+  ROBOTRACE,
+  LINE_MAZE
 ]
 
 export const DEFAULT_COURSE = 'oval'
@@ -358,10 +493,38 @@ export interface Track {
   length: number
   /** สีของท่อนที่เริ่มจากจุดนั้นไปจุดถัดไป */
   paint: Paint[]
-  /** อยู่ลึกเข้าไปในโซนแดงกี่พิกเซลแล้ว — นอกโซนเป็น -1 */
-  redDepth: number[]
   /** ตารางช่องละ CELL พิกเซล บอกว่าช่องนั้นมีท่อนเส้นที่ "มองเห็นได้" ท่อนไหนผ่านบ้าง — เส้นขาดไม่อยู่ในตาราง */
   grid: Map<number, number[]>
+  /**
+   * ท่อนของทางแยกหลอก ซอยถี่เท่าเส้นหลัก — ในตารางเก็บเป็นเลขติดลบ (-1 คือท่อนแรก)
+   * แยกจากเส้นหลักเพราะเส้นหลักต้องเป็นวงเดียวต่อกัน ใช้นับว่าวิ่งไปได้เท่าไรของรอบ
+   */
+  spurs: Array<[Point, Point]>
+  /** ป้ายเขียวทุกป้ายของสนาม */
+  markers: Marker[]
+  /** เขาวงกตบนเส้น — null คือสนามวงปิดธรรมดา */
+  maze: MazeGraph | null
+}
+
+/** เส้นของเขาวงกตที่หั่นเป็นท่อนระหว่างทางแยก พร้อมระยะทางตามเส้นจากปลายแต่ละข้างถึงเส้นชัย */
+export interface MazeGraph {
+  finish: Point
+  edges: Array<{ from: Point; to: Point; fromLeft: number; toLeft: number }>
+}
+
+/** ป้ายเขียวหนึ่งป้าย — สี่เหลี่ยมที่หมุนตามแนวเส้นตรงก่อนถึงทางแยก */
+export interface Marker {
+  /**
+   * green = ป้ายเขียวบอกทางที่ทางแยก (RoboCupJunior)
+   * corner = เครื่องหมายข้างซ้ายของเส้นตรงจุดที่ความโค้งเปลี่ยน (Robotrace / UKMARS)
+   */
+  kind: 'green' | 'corner'
+  /** จุดกึ่งกลางของป้าย */
+  x: number
+  y: number
+  /** ทิศของเส้นตรงที่ป้ายวางอยู่ (เรเดียน) */
+  angle: number
+  side: Side
 }
 
 /** เส้นโค้ง Catmull-Rom ผ่านจุด p1 → p2 ที่ตำแหน่ง t (0..1) */
@@ -442,7 +605,194 @@ function outline(course: Course): Sample[] {
 
 const cellKey = (cx: number, cy: number): number => cy * 1000 + cx
 
+const unit = (from: Point, to: Point): Point => {
+  const size = Math.hypot(to.x - from.x, to.y - from.y) || 1
+  return { x: (to.x - from.x) / size, y: (to.y - from.y) / size }
+}
+
+/**
+ * ทางของหุ่นเลี้ยวไปทางไหนที่มุม at — ดูจากทิศก่อนถึงมุมกับทิศหลังผ่านมุม
+ * จอมีแกน y ชี้ลง ด้านซ้ายของทิศ (x, y) จึงเป็น (y, -x)
+ */
+export function turnAt(course: Pick<Course, 'points'>, at: number): Side | null {
+  const list = course.points
+  const count = list.length
+  const incoming = unit(list[(at - 1 + count) % count]!, list[at]!)
+  const outgoing = unit(list[at]!, list[(at + 1) % count]!)
+  const leftward = outgoing.x * incoming.y - outgoing.y * incoming.x
+
+  if (leftward > 0.5) return 'left'
+  if (leftward < -0.5) return 'right'
+  return null
+}
+
+/** ป้ายเขียวของทางแยกหนึ่งแห่ง — ทางตรงไปไม่มีป้าย */
+function markerOf(course: Course, branch: Branch): Marker | null {
+  const side = turnAt(course, branch.at)
+  if (!side) return null
+
+  const list = course.points
+  const corner = list[branch.at]!
+  const ahead = unit(list[(branch.at - 1 + list.length) % list.length]!, corner)
+  const left = { x: ahead.y, y: -ahead.x }
+  const reach = LINE_WIDTH / 2 + MARKER_CLEAR + MARKER_SIZE / 2
+  const lateral = side === 'left' ? reach : -reach
+
+  return {
+    kind: 'green',
+    x: corner.x - ahead.x * reach + left.x * lateral,
+    y: corner.y - ahead.y * reach + left.y * lateral,
+    angle: Math.atan2(ahead.y, ahead.x),
+    side
+  }
+}
+
+/** เครื่องหมายโค้ง — วางข้างซ้ายของเส้นตรงจุดนั้นพอดี ห่างขอบเส้นเท่าป้ายเขียว */
+function cornerOf(course: Course, at: number): Marker {
+  const list = course.points
+  const point = list[at]!
+  const ahead = unit(list[(at - 1 + list.length) % list.length]!, point)
+  const reach = LINE_WIDTH / 2 + MARKER_CLEAR + MARKER_SIZE / 2
+
+  return {
+    kind: 'corner',
+    x: point.x + ahead.y * reach,
+    y: point.y - ahead.x * reach,
+    angle: Math.atan2(ahead.y, ahead.x),
+    side: 'left'
+  }
+}
+
+/** จุดนั้นอยู่บนป้ายเขียวป้ายไหนไหม */
+export function markerUnder(track: Pick<Track, 'markers'>, p: Point): Marker | null {
+  const half = MARKER_SIZE / 2
+  for (const marker of track.markers) {
+    const dx = p.x - marker.x
+    const dy = p.y - marker.y
+    const along = dx * Math.cos(marker.angle) + dy * Math.sin(marker.angle)
+    const across = -dx * Math.sin(marker.angle) + dy * Math.cos(marker.angle)
+    if (Math.abs(along) <= half && Math.abs(across) <= half) return marker
+  }
+  return null
+}
+
+/** ซอยทางแยกหลอกเป็นท่อนสั้น ๆ ถี่เท่าเส้นหลัก */
+function spursOf(course: Course): Array<[Point, Point]> {
+  const pieces: Array<[Point, Point]> = []
+
+  for (const branch of course.branches ?? []) {
+    const from = course.points[branch.at]!
+    const steps = Math.max(1, Math.ceil(Math.hypot(branch.to.x - from.x, branch.to.y - from.y) / SAMPLE))
+    for (let step = 0; step < steps; step++) {
+      const at = (t: number): Point => ({ x: from.x + (branch.to.x - from.x) * t, y: from.y + (branch.to.y - from.y) * t })
+      pieces.push([at(step / steps), at((step + 1) / steps)])
+    }
+  }
+
+  return pieces
+}
+
+/** หั่นเส้นของเขาวงกตตรงทุกจุดที่เส้นอื่นมาแตะ แล้วหาระยะตามเส้นจากทุกทางแยกถึงเส้นชัย */
+function mazeGraph(maze: LineMaze): MazeGraph {
+  const key = (p: Point) => `${Math.round(p.x)},${Math.round(p.y)}`
+  const ends = new Map<string, Point>()
+  for (const [from, to] of maze.lines) {
+    ends.set(key(from), from)
+    ends.set(key(to), to)
+  }
+
+  const pieces: Array<[Point, Point]> = []
+  for (const [from, to] of maze.lines) {
+    const length = Math.hypot(to.x - from.x, to.y - from.y)
+    const cuts = [...ends.values()]
+      .map((at) => ({ at, t: ((at.x - from.x) * (to.x - from.x) + (at.y - from.y) * (to.y - from.y)) / (length * length) }))
+      .filter(({ at, t }) => t >= 0 && t <= 1 && toSegment(at, from, to) < 0.5)
+      .sort((a, b) => a.t - b.t)
+    for (let index = 1; index < cuts.length; index++) pieces.push([cuts[index - 1]!.at, cuts[index]!.at])
+  }
+
+  // Dijkstra จากเส้นชัยย้อนออกไป — เขาวงกตเล็ก ไล่หาตัวที่ใกล้สุดทีละตัวก็พอ
+  const left = new Map<string, number>([[key(maze.finish), 0]])
+  const done = new Set<string>()
+  for (;;) {
+    let best: string | null = null
+    for (const [name, value] of left) if (!done.has(name) && (best === null || value < left.get(best)!)) best = name
+    if (best === null) break
+    done.add(best)
+    for (const [from, to] of pieces) {
+      for (const [a, b] of [[from, to], [to, from]] as const) {
+        if (key(a) !== best) continue
+        const through = left.get(best)! + Math.hypot(b.x - a.x, b.y - a.y)
+        if (through < (left.get(key(b)) ?? Number.POSITIVE_INFINITY)) left.set(key(b), through)
+      }
+    }
+  }
+
+  return {
+    finish: maze.finish,
+    edges: pieces.map(([from, to]) => ({
+      from,
+      to,
+      fromLeft: left.get(key(from)) ?? Number.POSITIVE_INFINITY,
+      toLeft: left.get(key(to)) ?? Number.POSITIVE_INFINITY
+    }))
+  }
+}
+
+/** จากจุดนั้นต้องวิ่งตามเส้นอีกไกลแค่ไหนถึงเส้นชัย — คิดจากท่อนเส้นที่ใกล้ที่สุด */
+export function mazeLeft(graph: MazeGraph, p: Point): number {
+  let best = Number.POSITIVE_INFINITY
+  let left = Number.POSITIVE_INFINITY
+
+  for (const edge of graph.edges) {
+    const gap = toSegment(p, edge.from, edge.to)
+    if (gap > best + 0.01) continue
+    const viaFrom = edge.fromLeft + Math.hypot(p.x - edge.from.x, p.y - edge.from.y)
+    const viaTo = edge.toLeft + Math.hypot(p.x - edge.to.x, p.y - edge.to.y)
+    const here = Math.min(viaFrom, viaTo)
+    if (gap < best - 0.01 || here < left) left = here
+    best = Math.min(best, gap)
+  }
+
+  return left
+}
+
+function buildMazeTrack(maze: LineMaze): Track {
+  const graph = mazeGraph(maze)
+  const spurs: Array<[Point, Point]> = []
+
+  for (const [from, to] of maze.lines) {
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / SAMPLE))
+    const at = (t: number): Point => ({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t })
+    for (let step = 0; step < steps; step++) spurs.push([at(step / steps), at((step + 1) / steps)])
+  }
+
+  const grid = new Map<number, number[]>()
+  for (const [index, [from, to]] of spurs.entries()) {
+    for (const at of [from, to]) {
+      const key = cellKey(Math.floor(at.x / CELL), Math.floor(at.y / CELL))
+      const list = grid.get(key)
+      if (list?.includes(-(index + 1))) continue
+      if (list) list.push(-(index + 1))
+      else grid.set(key, [-(index + 1)])
+    }
+  }
+
+  return {
+    points: [{ ...maze.start }],
+    along: [0],
+    length: mazeLeft(graph, maze.start),
+    paint: ['black'],
+    grid,
+    spurs,
+    markers: [],
+    maze: graph
+  }
+}
+
 export function buildTrack(course: Course): Track {
+  if (course.maze) return buildMazeTrack(course.maze)
+
   const samples = outline(course)
   const points: Point[] = samples.map(({ x, y }) => ({ x, y }))
   const paint = samples.map((sample) => paintOf(course, sample.from))
@@ -457,17 +807,6 @@ export function buildTrack(course: Course): Track {
   const last = points[points.length - 1]!
   const first = points[0]!
   const length = along[along.length - 1]! + Math.hypot(first.x - last.x, first.y - last.y)
-
-  // ลึกเข้าไปในโซนแดงเท่าไร — เดินสองรอบ โซนที่คร่อมจุดเริ่มจะได้นับต่อเนื่องถูก
-  const redDepth = points.map(() => -1)
-  let depth = -1
-  for (let step = 0; step < points.length * 2; step++) {
-    const index = step % points.length
-    const before = (index - 1 + points.length) % points.length
-    const seg = Math.hypot(points[index]!.x - points[before]!.x, points[index]!.y - points[before]!.y)
-    depth = paint[index] === 'red' ? (depth < 0 ? 0 : depth + seg) : -1
-    if (step >= points.length || redDepth[index] === -1) redDepth[index] = depth
-  }
 
   const grid = new Map<number, number[]>()
   for (let index = 0; index < points.length; index++) {
@@ -487,7 +826,24 @@ export function buildTrack(course: Course): Track {
     }
   }
 
-  return { points, along, length, paint, redDepth, grid }
+  // ทางแยกหลอกเข้าตารางเดียวกัน แต่ใช้เลขติดลบ เซนเซอร์จะได้เห็นเหมือนเส้นดำธรรมดา
+  const spurs = spursOf(course)
+  for (const [index, [from, to]] of spurs.entries()) {
+    for (const at of [from, to]) {
+      const key = cellKey(Math.floor(at.x / CELL), Math.floor(at.y / CELL))
+      const list = grid.get(key)
+      if (list?.includes(-(index + 1))) continue
+      if (list) list.push(-(index + 1))
+      else grid.set(key, [-(index + 1)])
+    }
+  }
+
+  const markers = [
+    ...(course.branches ?? []).map((branch) => markerOf(course, branch)).filter((item) => item !== null),
+    ...(course.corners ?? []).map((at) => cornerOf(course, at))
+  ]
+
+  return { points, along, length, paint, grid, spurs, markers, maze: null }
 }
 
 /** ช่วงของเส้นที่สีเดียวกันต่อกัน — ใช้วาดสนาม */
@@ -498,6 +854,7 @@ export interface PaintRun {
 
 /** แบ่งเส้นทั้งวงเป็นช่วงสีเดียวกัน ช่วงสุดท้ายปิดวงกลับมาจุดแรก */
 export function paintRuns(track: Track): PaintRun[] {
+  if (track.maze) return []
   const runs: PaintRun[] = []
   const count = track.points.length
 
@@ -544,13 +901,21 @@ export function nearestLine(track: Track, p: Point): { gap: number; paint: Paint
       if (!list) continue
 
       for (const index of list) {
-        const gap = toSegment(p, track.points[index]!, track.points[(index + 1) % track.points.length]!)
+        const [from, to] =
+          index < 0 ? track.spurs[-index - 1]! : [track.points[index]!, track.points[(index + 1) % track.points.length]!]
+        const gap = toSegment(p, from, to)
         if (gap < best) {
           best = gap
-          paint = track.paint[index]!
+          paint = index < 0 ? 'black' : track.paint[index]!
         }
       }
     }
+  }
+
+  // วงกลมเส้นชัยของเขาวงกตเป็นสีดำทั้งวง — ข้างในวงอ่านได้เต็มเหมือนอยู่กลางเส้น
+  if (track.maze) {
+    const disk = Math.max(0, Math.hypot(p.x - track.maze.finish.x, p.y - track.maze.finish.y) - FINISH_RADIUS)
+    if (disk < best) best = disk
   }
 
   return { gap: best, paint }
@@ -586,13 +951,17 @@ export interface Run {
   sensors: number[]
   /** สีของเส้นที่เซนเซอร์แต่ละตัวเห็น — ไม่เห็นเส้นเป็น null */
   colors: Array<Paint | null>
+  /** เซนเซอร์แต่ละตัวอยู่บนป้ายเขียวไหม */
+  greens: boolean[]
+  /** เซนเซอร์แต่ละตัวอยู่บนเครื่องหมายโค้งไหม */
+  corners: boolean[]
   /** เห็นเส้นครั้งล่าสุดทางไหน — -1 ซ้าย · 1 ขวา · 0 ยังไม่เคยหลุด */
   lastSide: number
 
   time: number
   frame: number
 
-  /** จุดบนเส้นที่ใกล้เซนเซอร์ตัวกลางที่สุด — ใช้ดูว่าเซนเซอร์เข้าโซนแดงลึกแค่ไหน */
+  /** จุดบนเส้นที่ใกล้เซนเซอร์ตัวกลางที่สุด */
   sensorIndex: number
   /** จุดบนเส้นที่ใกล้ตัวที่สุดตอนนี้ — ใช้นับว่าวิ่งไปได้เท่าไรแล้ว */
   index: number
@@ -632,24 +1001,35 @@ export function sensorPoint(run: Pick<Run, 'x' | 'y' | 'heading'>, index: number
 function scan(run: Run): void {
   const sensors: number[] = []
   const colors: Array<Paint | null> = []
+  const greens: boolean[] = []
+  const corners: boolean[] = []
 
   for (let index = 0; index < SENSOR_COUNT; index++) {
-    const found = nearestLine(run.track, sensorPoint(run, index))
+    const at = sensorPoint(run, index)
+    const found = nearestLine(run.track, at)
     const value = readingAt(found.gap)
     sensors.push(value)
     colors.push(value >= SEE_THRESHOLD ? found.paint : null)
+    const marker = markerUnder(run.track, at)
+    greens.push(marker?.kind === 'green')
+    corners.push(marker?.kind === 'corner')
   }
 
   run.sensors = sensors
   run.colors = colors
+  run.greens = greens
+  run.corners = corners
 }
 
-/** มีเซนเซอร์ตัวไหนเห็นเส้นสีนี้อยู่บ้าง */
-export const seesPaint = (run: Pick<Run, 'colors'>, paint: Paint): boolean => run.colors.includes(paint)
+/** เห็นเครื่องหมายโค้งข้างซ้ายไหม — ดูเซนเซอร์ซ้ายสุดกับซ้าย */
+export const seesCorner = (run: Pick<Run, 'corners'>): boolean => Boolean(run.corners[0] || run.corners[1])
 
-/** ตัวหุ่นอยู่ลึกในโซนแดงจนถูกจับความเร็วแล้วหรือยัง */
-export const inSpeedZone = (run: Run): boolean =>
-  run.colors[2] === 'red' && (run.track.redDepth[run.sensorIndex] ?? -1) > ZONE_GRACE
+/**
+ * เห็นป้ายเขียวทางฝั่งนั้นไหม — ดูแค่เซนเซอร์สองตัวของฝั่งนั้น (ซ้ายสุด/ซ้าย หรือ ขวา/ขวาสุด)
+ * เซนเซอร์ตัวกลางไม่นับ เพราะป้ายอยู่ข้างเส้น ตัวกลางไปอยู่บนป้ายได้ก็ต่อเมื่อหุ่นเบี้ยวออกนอกเส้นแล้ว
+ */
+export const seesMarker = (run: Pick<Run, 'greens'>, side: Side): boolean =>
+  side === 'left' ? Boolean(run.greens[0] || run.greens[1]) : Boolean(run.greens[3] || run.greens[4])
 
 /** ถ่วงน้ำหนักของเซนเซอร์แต่ละตัว — ซ้ายสุด -100 ถึงขวาสุด 100 */
 const WEIGHTS = Array.from({ length: SENSOR_COUNT }, (_, index) =>
@@ -699,8 +1079,14 @@ export function createRun(options: Partial<RunOptions> = {}): Run {
   const track = buildTrack(course)
 
   // หันหัวไปหาจุดบนเส้นที่อยู่ห่างออกไปเท่าระยะแถวเซนเซอร์พอดี เซนเซอร์ตัวกลางจะได้อยู่บนเส้นตั้งแต่ออกตัว
+  // เขาวงกตไม่มีทางวิ่งตายตัว จึงใช้ทิศที่ตั้งไว้กับสนามแทน
   const start = track.points[0]!
-  const next = track.points[track.along.findIndex((along) => along >= SENSOR_AHEAD)]!
+  const next = course.maze
+    ? {
+        x: start.x + Math.cos((course.maze.heading * Math.PI) / 180),
+        y: start.y + Math.sin((course.maze.heading * Math.PI) / 180)
+      }
+    : track.points[track.along.findIndex((along) => along >= SENSOR_AHEAD)]!
 
   const run: Run = {
     course,
@@ -713,6 +1099,8 @@ export function createRun(options: Partial<RunOptions> = {}): Run {
     drive: { left: 0, right: 0 },
     sensors: [],
     colors: [],
+    greens: [],
+    corners: [],
     lastSide: 0,
     time: 0,
     frame: 0,
@@ -744,6 +1132,15 @@ const MAX_SUB_STEP = 2
 
 /** หาจุดบนเส้นที่ใกล้ตัวที่สุด โดยดูแค่แถว ๆ จุดเดิม — จุดตัดของเลขแปดจะได้ไม่พาข้ามไปอีกวง */
 function follow(run: Run): void {
+  // เขาวงกต — ห่างจากเส้นไหนก็ได้ที่ใกล้สุด และคืบหน้าเท่ากับระยะตามเส้นที่หายไปจากตอนออกตัว
+  const maze = run.track.maze
+  if (maze) {
+    run.offset = distanceToLine(run.track, run)
+    run.progress = run.track.length - mazeLeft(maze, run)
+    run.furthest = Math.max(run.furthest, run.progress)
+    return
+  }
+
   const points = run.track.points
   const count = points.length
   let best = run.index
@@ -826,13 +1223,20 @@ export function advance(run: Run): void {
 
   if (run.frame % 3 === 0) run.trail.push({ x: run.x, y: run.y })
 
-  if (run.progress >= run.track.length) run.over = 'finished'
-  else if (run.offset > OFF_TRACK) {
+  const maze = run.track.maze
+  const arrived = maze
+    ? Math.hypot(run.x - maze.finish.x, run.y - maze.finish.y) <= FINISH_RADIUS
+    : run.progress >= run.track.length
+
+  if (arrived) {
+    run.over = 'finished'
+    // ตัวหุ่นแตะขอบวงกลมเส้นชัยก็นับว่าถึง ไม่ต้องรอให้ถึงจุดกลางวง
+    run.progress = run.furthest = run.track.length
+  } else if (run.offset > OFF_TRACK) {
     run.over = 'lost'
     // ห่างจากทางของตัวเองก็จริง แต่ตัวยังคร่อมเส้นอยู่ — แปลว่าไปเกาะเส้นท่อนอื่นที่ตัดผ่านมา
-    run.strayed = distanceToLine(run.track, run) < LINE_WIDTH
-  } else if (inSpeedZone(run) && speedOf(run) > ZONE_LIMIT) run.over = 'speeding'
-  else if (run.time >= TIME_LIMIT) run.over = 'timeout'
+    run.strayed = !maze && distanceToLine(run.track, run) < LINE_WIDTH
+  } else if (run.time >= TIME_LIMIT) run.over = 'timeout'
 }
 
 /** เดินไปหนึ่งช่วงตัดสินใจ (DECIDE_EVERY เฟรม) */
@@ -840,16 +1244,25 @@ export function advanceDecision(run: Run): void {
   for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
 }
 
+/** คำที่ใช้เรียกการจบแบบสำเร็จ — สนามวงปิดคือครบรอบ เขาวงกตคือถึงเส้นชัย */
+export const goalWord = (course: Pick<Course, 'maze'>): string => (course.maze ? 'ถึงเส้นชัย' : 'ครบรอบ')
+
+/** ความคืบหน้าเทียบกับอะไร — รอบของสนาม หรือทางจากจุดเริ่มถึงเส้นชัย */
+export const progressWord = (course: Pick<Course, 'maze'>): string => (course.maze ? 'ของทาง' : 'ของรอบ')
+
 /** สรุปว่ารอบนี้จบยังไง และควรแก้ตรงไหน — ใช้เขียนข้อความตอนจบ */
 export function adviceFor(run: Run): string {
   if (run.over === 'finished') {
+    if (run.track.maze) {
+      return `ถึงเส้นชัยแล้ว — ทางที่สั้นที่สุดยาว ${Math.round(run.track.length)} พิกเซล ลองดูรอยว่าเข้าทางตันไปกี่แห่ง ถ้าจำทางไว้ได้ รอบหน้าจะไม่ต้องเข้าเลย`
+    }
     return averageOffset(run) > 6
       ? 'ครบรอบแล้ว แต่ส่ายห่างเส้นอยู่มาก ลองเลี้ยวให้นุ่มลงแล้วดูว่าเร็วขึ้นไหม'
       : 'ครบรอบแล้ว และเกาะเส้นได้แนบ ลองเร่งกำลังมอเตอร์ดูว่ายังเกาะอยู่ไหม'
   }
 
-  if (run.over === 'speeding') {
-    return `วิ่งเข้าโซนแดงเร็วเกิน ${ZONE_LIMIT} px/วิ — มอเตอร์ชะลอทันทีไม่ได้ ต้องลดกำลังตั้งแต่เซนเซอร์เพิ่งเห็นสีแดง ไม่ใช่รอให้ตัวเข้าไปก่อน`
+  if (run.over === 'lost' && run.track.maze) {
+    return 'หลุดออกจากเส้นของเขาวงกต — มักเกิดตอนเลี้ยวเข้าทางแยกแรงเกินจนเลยเส้น หรือหมุนกลับที่ทางตันแล้วหาเส้นไม่เจอ'
   }
 
   if (run.over === 'lost' && run.strayed) {
@@ -872,6 +1285,29 @@ export const secondsOf = (time: number): string => time.toFixed(2)
 
 // ---------- ตรวจสนามที่วาดเอง ----------
 
+/** เขาวงกตใช้ได้ไหม — เส้นอยู่ในกรอบ หักมุมฉาก จุดเริ่มอยู่บนเส้น และจากจุดเริ่มไปถึงเส้นชัยได้ */
+function checkMaze(course: Course): string | null {
+  const maze = course.maze!
+  const inside = (at: Point) =>
+    at.x >= EDGE_MARGIN && at.y >= EDGE_MARGIN && at.x <= VIEW.width - EDGE_MARGIN && at.y <= VIEW.height - EDGE_MARGIN
+
+  for (const [from, to] of maze.lines) {
+    if (!inside(from) || !inside(to)) return 'เส้นของเขาวงกตล้นขอบสนาม'
+    if (from.x !== to.x && from.y !== to.y) return 'เส้นของเขาวงกตต้องเป็นแนวนอนหรือแนวตั้งเท่านั้น'
+  }
+
+  const track = buildTrack(course)
+  if (!Number.isFinite(track.length)) return 'จากจุดเริ่มไปไม่ถึงเส้นชัย'
+  if (!Number.isFinite(mazeLeft(track.maze!, maze.finish)) || mazeLeft(track.maze!, maze.finish) > 0.5) {
+    return 'เส้นชัยต้องอยู่ที่ปลายของเส้นใดเส้นหนึ่ง'
+  }
+
+  const run = createRun({ course })
+  if ((run.sensors[2] ?? 0) < SEE_THRESHOLD) return 'หุ่นออกตัวมาแล้วเซนเซอร์ตัวกลางไม่เห็นเส้น'
+
+  return null
+}
+
 /** เส้นต้องห่างขอบสนามอย่างน้อยเท่านี้ — ตัวหุ่นกว้างราว 40 พิกเซล ชิดขอบกว่านี้จะวิ่งตกจอ */
 const EDGE_MARGIN = 24
 
@@ -883,6 +1319,8 @@ const SHORTEST_TRACK = 600
  * ใช้กับสนามที่วาดเองก่อนบันทึก สนามที่มีมากับเกมก็ต้องผ่านด่านเดียวกัน (มีเทสต์ตรวจ)
  */
 export function checkCourse(course: Course): string | null {
+  if (course.maze) return checkMaze(course)
+
   const points = course.points
 
   if (points.length < 3) return 'วางจุดอย่างน้อย 3 จุด เส้นถึงจะวนกลับมาเป็นวงได้'
@@ -890,7 +1328,7 @@ export function checkCourse(course: Course): string | null {
   for (let index = 0; index < points.length; index++) {
     const from = points[index]!
     const to = points[(index + 1) % points.length]!
-    if (Math.hypot(to.x - from.x, to.y - from.y) < 12) return `จุดที่ ${index + 1} กับจุดถัดไปซ้อนกันเกือบสนิท — ลากแยกออกจากกันหรือลบทิ้งหนึ่งจุด`
+    if (Math.hypot(to.x - from.x, to.y - from.y) < 6) return `จุดที่ ${index + 1} กับจุดถัดไปซ้อนกันเกือบสนิท — ลากแยกออกจากกันหรือลบทิ้งหนึ่งจุด`
   }
 
   if (paintOf(course, 0) === 'gap') return 'ท่อนแรกที่ออกจากจุดเริ่มต้องเป็นเส้นที่มองเห็นได้ ไม่งั้นหุ่นออกตัวมาก็ไม่เห็นเส้นเลย'
@@ -905,6 +1343,21 @@ export function checkCourse(course: Course): string | null {
   if (track.length < SHORTEST_TRACK) return `สนามสั้นเกินไป (${Math.round(track.length)} พิกเซล) ต้องยาวอย่างน้อย ${SHORTEST_TRACK} พิกเซล`
 
   if (track.paint.every((paint) => paint === 'gap')) return 'ทั้งสนามเป็นเส้นขาดหมด ไม่มีอะไรให้หุ่นมองเห็นเลย'
+
+  for (const branch of course.branches ?? []) {
+    if (course.smooth) return 'ทางแยกใช้ได้กับสนามแบบเส้นตรงเท่านั้น — เส้นโค้งไม่ผ่านมุมที่ทางแยกแตกออกพอดี'
+    if (!Number.isInteger(branch.at) || branch.at < 1 || branch.at >= points.length) {
+      return 'ทางแยกต้องแตกออกจากมุมของสนาม และห้ามแตกจากจุดเริ่ม'
+    }
+    const { to } = branch
+    if (to.x < EDGE_MARGIN || to.y < EDGE_MARGIN || to.x > VIEW.width - EDGE_MARGIN || to.y > VIEW.height - EDGE_MARGIN) {
+      return 'ปลายทางแยกล้นขอบสนาม'
+    }
+    const from = points[branch.at]!
+    if (Math.hypot(to.x - from.x, to.y - from.y) < OFF_TRACK + 20) {
+      return `ทางแยกสั้นเกินไป — ต้องยาวอย่างน้อย ${OFF_TRACK + 20} พิกเซล หุ่นที่เข้าผิดทางจะได้หลุดสนามจริง ไม่ใช่วิ่งเลยปลายแล้ววกกลับมาได้`
+    }
+  }
 
   const run = createRun({ course })
   if ((run.sensors[2] ?? 0) < SEE_THRESHOLD) {

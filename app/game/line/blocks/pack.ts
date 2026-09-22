@@ -3,6 +3,8 @@ import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
 
+import { LINE_EXPLAIN } from './explain'
+
 /**
  * ชุดบล็อกของหุ่นเดินตามเส้น — สั่งได้อย่างเดียวคือกำลังมอเตอร์สองข้าง
  *
@@ -20,9 +22,9 @@ const SENSORS: SelectOption[] = [
   { value: '4', label: 'ขวาสุด' }
 ]
 
-const COLORS: SelectOption[] = [
-  { value: 'red', label: 'แดง' },
-  { value: 'black', label: 'ดำ' }
+const SIDES: SelectOption[] = [
+  { value: 'left', label: 'ซ้าย' },
+  { value: 'right', label: 'ขวา' }
 ]
 
 const HAT: BlockSpec = {
@@ -34,6 +36,33 @@ const HAT: BlockSpec = {
   parts: [{ type: 'text', text: 'เมื่อถึงเวลาตัดสินใจ' }],
   emit: () => {}
 }
+
+const HAT_START: BlockSpec = {
+  kind: 'line.on-start',
+  shape: 'hat',
+  category: 'event',
+  title: 'เมื่อเริ่มวิ่ง',
+  hint: 'ทำครั้งเดียวก่อนออกตัว — เหมาะกับการโหลดสิ่งที่จำไว้จากรอบก่อน หรือให้ฝูงนกบินไปลองค่าชุดใหม่',
+  parts: [{ type: 'text', text: 'เมื่อเริ่มวิ่ง' }],
+  emit: () => {}
+}
+
+const HAT_FINISH: BlockSpec = {
+  kind: 'line.on-finish',
+  shape: 'hat',
+  category: 'event',
+  title: 'เมื่อจบรอบ',
+  hint: 'ทำครั้งเดียวตอนรอบจบ ไม่ว่าจะครบรอบ หลุดเส้น หรือหมดเวลา — "เวลาที่ผ่านไป" ตรงนี้คือคะแนนของรอบนั้น',
+  parts: [{ type: 'text', text: 'เมื่อจบรอบ' }],
+  emit: () => {}
+}
+
+/** ค่าที่ฝูงนกหาให้ — ชื่อตรงกับมิติใน swarm.ts */
+const BIRD_VALUES: SelectOption[] = [
+  { value: 'power', label: 'กำลัง' },
+  { value: 'kp', label: 'Kp' },
+  { value: 'kd', label: 'Kd' }
+]
 
 const BLOCKS: BlockSpec[] = [
   {
@@ -113,17 +142,86 @@ const BLOCKS: BlockSpec[] = [
     emit: (node, ctx) => `this.sensor(${ctx.field(node, 'sensor')})`
   },
   {
-    kind: 'line.sees-color',
+    kind: 'line.sees-marker',
     shape: 'value',
     value: 'check',
     category: 'sense',
-    title: 'เห็นเส้นสี',
-    hint: 'มีเซนเซอร์ตัวไหนเห็นเส้นสีนี้อยู่บ้าง — เส้นแดงคือโซนที่ห้ามวิ่งเร็วเกิน 120 px/วิ (กำลังราว 40) เห็นเมื่อไรต้องชะลอทันที เพราะมอเตอร์ผ่อนแรงช้า',
+    title: 'เห็นป้ายเขียว',
+    hint: 'ป้ายเขียวข้างเส้นบอกว่าทางแยกข้างหน้าต้องเลี้ยวไปฝั่งนั้น ไม่มีป้ายคือตรงไป — ป้ายอยู่ก่อนถึงทางแยก พอถึงทางแยกจริงก็เลยป้ายไปแล้ว ต้องจำไว้ในตัวแปร',
     parts: [
-      { type: 'text', text: 'เห็นเส้นสี' },
-      { type: 'field', name: 'color', options: COLORS }
+      { type: 'text', text: 'เห็นป้ายเขียวทาง' },
+      { type: 'field', name: 'side', options: SIDES }
     ],
-    emit: (node, ctx) => `this.seesColor(${quote(ctx.field(node, 'color'))})`
+    emit: (node, ctx) => `this.seesMarker(${quote(ctx.field(node, 'side'))})`
+  },
+  {
+    kind: 'line.sees-corner',
+    shape: 'value',
+    value: 'check',
+    category: 'sense',
+    title: 'เห็นเครื่องหมายโค้ง',
+    hint: 'สนามแข่งความเร็วแบบ Robotrace กับ UKMARS มีเครื่องหมายข้างซ้ายของเส้นทุกจุดที่เข้าโค้งหรือออกโค้ง — นับเครื่องหมายก็รู้ว่าตอนนี้อยู่ช่วงไหนของสนาม',
+    parts: [{ type: 'text', text: 'เห็นเครื่องหมายโค้ง' }],
+    emit: () => 'this.seesCorner()'
+  },
+  {
+    kind: 'line.finished',
+    shape: 'value',
+    value: 'check',
+    category: 'sense',
+    title: 'จบแบบสำเร็จ',
+    hint: 'รอบนี้ครบรอบ (หรือถึงเส้นชัยของเขาวงกต) แล้วหรือยัง — ใช้ในหัวบล็อก "เมื่อจบรอบ" เพื่อแยกรอบที่สำเร็จออกจากรอบที่หลุดเส้นหรือหมดเวลา',
+    parts: [{ type: 'text', text: 'จบแบบสำเร็จ' }],
+    emit: () => 'this.here.finished'
+  },
+  {
+    kind: 'line.swarm-fly',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: บินหนึ่งก้าว',
+    hint: 'นกตัวถัดไปในฝูงบินไปลองค่าชุดใหม่ (กำลัง Kp Kd) — ถูกดึงเข้าหาจุดที่ดีที่สุดของตัวเองกับของทั้งฝูง ฝูงถูกจำไว้ข้ามรอบเอง ใช้ในหัวบล็อก "เมื่อเริ่มวิ่ง"',
+    parts: [{ type: 'text', text: 'ฝูงนก: นกตัวถัดไปบินหนึ่งก้าว' }],
+    emit: (node, ctx) => ctx.line(node, 'this.swarmFly()')
+  },
+  {
+    kind: 'line.bird-value',
+    shape: 'value',
+    value: 'number',
+    category: 'data',
+    title: 'ค่าที่นกตัวนี้เลือก',
+    hint: 'ค่าของนกที่กำลังลองอยู่รอบนี้ — กำลังอยู่ในช่วง 40–100 · Kp 0–2 · Kd 0–10',
+    parts: [
+      { type: 'text', text: 'ค่า' },
+      { type: 'field', name: 'dim', options: BIRD_VALUES },
+      { type: 'text', text: 'ที่นกตัวนี้เลือก' }
+    ],
+    emit: (node, ctx) => `this.birdValue(${quote(ctx.field(node, 'dim'))})`
+  },
+  {
+    kind: 'line.swarm-best',
+    shape: 'value',
+    value: 'number',
+    category: 'data',
+    title: 'ค่าที่ดีที่สุดของฝูง',
+    hint: 'ค่าที่ดีที่สุดที่ทั้งฝูงเคยเจอ — ฝึกจนพอใจแล้ว ใช้ค่านี้แทน "ค่าที่นกตัวนี้เลือก" เพื่อวิ่งด้วยค่าที่ดีที่สุดทุกรอบ',
+    parts: [
+      { type: 'text', text: 'ค่า' },
+      { type: 'field', name: 'dim', options: BIRD_VALUES },
+      { type: 'text', text: 'ที่ดีที่สุดของฝูง' }
+    ],
+    emit: (node, ctx) => `this.swarmBest(${quote(ctx.field(node, 'dim'))})`
+  },
+  {
+    kind: 'line.swarm-score',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: ให้คะแนน',
+    hint: 'ให้คะแนนนกตัวที่เพิ่งลอง — ยิ่งน้อยยิ่งดี ถ้าดีกว่าที่มันหรือทั้งฝูงเคยเจอ จุดนี้จะถูกจำไว้เป็นจุดดีที่สุดใหม่ ใช้ในหัวบล็อก "เมื่อจบรอบ"',
+    parts: [
+      { type: 'text', text: 'ฝูงนก: ให้คะแนนนกตัวนี้' },
+      { type: 'input', name: 'value', placeholder: 'คะแนน', accepts: 'number' }
+    ],
+    emit: (node, ctx) => ctx.line(node, `this.swarmScore(${ctx.value(node, 'value', '0')})`)
   },
   {
     kind: 'line.lost',
@@ -202,6 +300,14 @@ const compare = (left: BlockNode, op: string, right: BlockNode) => block('compar
 
 const ifDo = (cond: BlockNode, then: BlockNode[]) => block('if', {}, { cond }, { then })
 
+const both = (left: BlockNode, right: BlockNode) => block('and', {}, { left, right })
+
+const bird = (dim: 'power' | 'kp' | 'kd') => block('line.bird-value', { dim })
+
+const marker = (side: 'left' | 'right') => block('line.sees-marker', { side })
+
+const change = (name: string, by: number) => block('change-var', { name }, { value: number(by) })
+
 const SENSOR_CALLS: Array<[string, string]> = [
   ['sees', 'line.sees'],
   ['sensor', 'line.sensor']
@@ -212,7 +318,8 @@ const HERE_VALUES: Array<[string, string]> = [
   ['lost', 'line.lost'],
   ['speed', 'line.speed'],
   ['progress', 'line.progress'],
-  ['time', 'line.time']
+  ['time', 'line.time'],
+  ['finished', 'line.finished']
 ]
 
 /** บล็อกสั่งมอเตอร์ที่รับสองค่า — ชื่อเมธอด ชนิดบล็อก และชื่อช่องสองช่อง */
@@ -222,6 +329,12 @@ const TWO_INPUTS: Array<[string, string, string, string]> = [
 ]
 
 const STATEMENT_PARSERS: Matcher[] = [
+  (node, ctx) => (node.type === 'ExpressionStatement' && ctx.call(node.expression, 'swarmFly') ? ctx.make('line.swarm-fly') : null),
+  (node, ctx) => {
+    if (node.type !== 'ExpressionStatement') return null
+    const args = ctx.call(node.expression, 'swarmScore')
+    return args && args.length === 1 ? ctx.make('line.swarm-score', {}, { value: ctx.value(args[0]!) }) : null
+  },
   ...TWO_INPUTS.map<Matcher>(
     ([name, kind, first, second]) =>
       (node, ctx) => {
@@ -249,17 +362,33 @@ const VALUE_PARSERS: Matcher[] = [
         return sensor === null ? null : ctx.make(kind, { sensor: String(sensor) })
       }
   ),
+  (node, ctx) => (ctx.call(node, 'seesCorner') ? ctx.make('line.sees-corner') : null),
+  ...([['birdValue', 'line.bird-value'], ['swarmBest', 'line.swarm-best']] as const).map<Matcher>(
+    ([name, kind]) =>
+      (node, ctx) => {
+        const args = ctx.call(node, name)
+        const dim = args ? ctx.str(args[0]!) : null
+        return dim && BIRD_VALUES.some((item) => item.value === dim) ? ctx.make(kind, { dim }) : null
+      }
+  ),
   (node, ctx) => {
-    const args = ctx.call(node, 'seesColor')
-    const color = args ? ctx.str(args[0]!) : null
-    return color ? ctx.make('line.sees-color', { color }) : null
+    const args = ctx.call(node, 'seesMarker')
+    const side = args ? ctx.str(args[0]!) : null
+    return side === 'left' || side === 'right' ? ctx.make('line.sees-marker', { side }) : null
   },
+
   ...HERE_VALUES.map<Matcher>(
     ([name, kind]) =>
       (node, ctx) =>
         ctx.thisProp(node, 'here', name) ? ctx.make(kind) : null
   )
 ]
+
+/** ตัดบรรทัดรับสภาพสนามที่ codegen เขียนให้เองออก — ใช้กับหัวบล็อกเริ่มวิ่งกับจบรอบ */
+const unwrapHere = (statements: Node[], ctx: ParseContext): Node[] =>
+  statements.filter(
+    (node) => !(node.type === 'ExpressionStatement' && ctx.thisProp(node.expression?.left, 'here'))
+  )
 
 /**
  * ตัดบรรทัดที่ codegen เขียนให้เองออก ก่อนอ่านโค้ดกลับเป็นบล็อก
@@ -287,18 +416,39 @@ export const WORK_LABEL: Record<string, string> = {
   stop: 'หยุด',
   sensor: 'อ่านค่าเซนเซอร์',
   sees: 'ดูว่าเซนเซอร์เห็นเส้นไหม',
-  seesColor: 'ดูสีของเส้น'
+  seesMarker: 'มองหาป้ายเขียว',
+  seesCorner: 'มองหาเครื่องหมายโค้ง',
+  swarmFly: 'ฝูงนกบินหนึ่งก้าว',
+  birdValue: 'อ่านค่าที่นกเลือก',
+  swarmScore: 'ให้คะแนนนก'
 }
 
 export const LINE_PACK = createPack({
   id: 'line',
   blocks: BLOCKS,
+  explain: LINE_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'LineAgent',
     fields: [],
     helpers: '',
+    memory: true,
     methods: [
+      {
+        hat: HAT_START,
+        name: 'onStart',
+        // ไม่ได้ต่ออะไรไว้ก็ไม่ต้องเขียนเมธอดเปล่า ๆ ให้รก — โปรแกรมส่วนใหญ่ใช้แค่หัวบล็อกตัดสินใจ
+        skipWhenEmpty: true,
+        unwrap: unwrapHere,
+        write: (writer) => {
+          writer.push('onStart(state) {')
+          writer.indent(1)
+          writer.push('this.here = state')
+          writer.body()
+          writer.indent(-1)
+          writer.push('}')
+        }
+      },
       {
         hat: HAT,
         name: 'step',
@@ -312,6 +462,20 @@ export const LINE_PACK = createPack({
           writer.push('')
           writer.push('// อ่านจนจบแล้วไม่เจอบล็อกสั่งมอเตอร์ ก็ใช้กำลังเดิมต่อไป')
           writer.push('return null')
+          writer.indent(-1)
+          writer.push('}')
+        }
+      },
+      {
+        hat: HAT_FINISH,
+        name: 'onFinish',
+        skipWhenEmpty: true,
+        unwrap: unwrapHere,
+        write: (writer) => {
+          writer.push('onFinish(state) {')
+          writer.indent(1)
+          writer.push('this.here = state')
+          writer.body()
           writer.indent(-1)
           writer.push('}')
         }
@@ -381,7 +545,7 @@ export const LINE_PACK = createPack({
       id: 'switching',
       name: 'สลับพฤติกรรมตามสถานการณ์ (state machine)',
       description:
-        'ตัวที่ผ่านสนามโจทย์ยากได้ทุกสนาม — ปกติวิ่งแบบ PD แต่มีสองกรณีพิเศษที่แทรกเข้ามาก่อน: เห็นเส้นแดงก็ลดกำลังเหลือ 30 และหลุดเส้นตอนที่เส้นอยู่นิ่ง ๆ ตรงกลางมานานเกิน 10 ครั้ง แปลว่าเส้นขาด ไม่ใช่เลี้ยวไม่ทัน ก็วิ่งตรงข้ามไป · ค นับว่าเส้นอยู่นิ่งมากี่ครั้งแล้ว',
+        'ตัวที่ข้ามเส้นขาดแบบ RoboCupJunior ได้ — ปกติวิ่งแบบ PD แต่มีกรณีพิเศษแทรกเข้ามาก่อน: หลุดเส้นตอนที่เส้นอยู่นิ่ง ๆ ตรงกลางมานานเกิน 10 ครั้ง แปลว่าเส้นขาด ไม่ใช่เลี้ยวไม่ทัน ก็วิ่งตรงข้ามไป · c นับว่าเส้นอยู่นิ่งมากี่ครั้งแล้ว',
       build: (): BlockProgram => ({
         name: 'สลับพฤติกรรมตามสถานการณ์',
         scripts: {
@@ -402,7 +566,76 @@ export const LINE_PACK = createPack({
               math(math(math(position(), 'sub', readVar('b')), 'mul', number(5)), 'add', math(position(), 'mul', number(0.7)))
             ),
             setVar('b', position()),
-            ifElse(block('line.sees-color', { color: 'red' }), [steer(number(30), readVar('a'))], [steer(number(80), readVar('a'))])
+            steer(number(80), readVar('a'))
+          ]
+        }
+      })
+    },
+    {
+      id: 'swarm',
+      name: 'ฝูงนกหาค่า PD (PSO)',
+      description:
+        'ไม่ต้องจูน PD ด้วยมือ — ให้ฝูงนกหกตัวหาเอง นกแต่ละตัวคือค่าหนึ่งชุด (กำลัง Kp Kd) ทุกรอบนกตัวถัดไปบินหนึ่งก้าว วิ่งด้วยค่าของมัน แล้วรับคะแนนเป็นเวลาต่อรอบ (หลุดเส้นหรือหมดเวลาโดนบวกโทษ) นกถูกดึงเข้าหาจุดที่ดีที่สุดของตัวเองและของทั้งฝูง — กด "ฝึก" ให้มันวิ่งรัว ๆ ร้อยรอบแล้วดูเวลาลดลงเอง',
+      build: (): BlockProgram => ({
+        name: 'ฝูงนกหาค่า PD (PSO)',
+        scripts: {
+          'line.on-start': [block('line.swarm-fly')],
+          'line.on-tick': [
+            // PD แบบเดียวกับตัวอย่าง PD แต่ทุกตัวเลขมาจากนกตัวที่ลองอยู่
+            setVar('a', math(position(), 'sub', readVar('b'))),
+            setVar('b', position()),
+            steer(
+              bird('power'),
+              math(math(readVar('b'), 'mul', bird('kp')), 'add', math(readVar('a'), 'mul', bird('kd')))
+            )
+          ],
+          // คะแนน = เวลาต่อรอบ · ไม่ครบรอบได้ 90 วินาทีเต็มบวกส่วนที่ยังขาด ไปได้ไกลกว่าจึงยังได้คะแนนดีกว่า
+          'line.on-finish': [
+            ifElse(
+              block('line.finished'),
+              [block('line.swarm-score', {}, { value: block('line.time') })],
+              [
+                block('line.swarm-score', {}, {
+                  value: math(number(90), 'add', math(number(100), 'sub', block('line.progress')))
+                })
+              ]
+            )
+          ]
+        }
+      })
+    },
+    {
+      id: 'left-hand',
+      name: 'มือซ้ายแตะกำแพงบนเส้น',
+      description:
+        'วิธีมาตรฐานของเขาวงกตบนเส้นแบบ Pololu — ทุกทางแยกเลือกซ้ายก่อน ไม่มีซ้ายก็ตรง ไม่มีตรงก็ขวา เจอทางตันก็กลับหลัง · ทั้งหมดนี้ได้จากกฎสองข้อ: เซนเซอร์ซ้ายสุดเห็นเส้นเมื่อไรแปลว่ามีทางแยกไปทางซ้าย ก็หมุนเข้าไปเลย นอกนั้นวิ่งแบบ P ซึ่งพอหลุดเส้นที่ทางตันก็หมุนหาเส้นจนกลับหลังได้เอง',
+      build: (): BlockProgram => ({
+        name: 'มือซ้ายแตะกำแพงบนเส้น',
+        scripts: {
+          'line.on-tick': [
+            ifElse(sees(0), [drive(-40, 60)], [steer(number(50), math(position(), 'mul', number(0.5)))])
+          ]
+        }
+      })
+    },
+    {
+      id: 'markers',
+      name: 'จำป้ายเขียวแล้วเลี้ยวที่ทางแยก',
+      description:
+        'แบบเดียวกับหุ่น RoboCupJunior — เห็นป้ายเขียวฝั่งไหนก็จำไว้ใน c (ซ้ายเป็นลบ ขวาเป็นบวก) แล้วนับถอยหลังทีละครั้ง ถ้าระหว่างที่ยังจำอยู่เซนเซอร์ริมสุดฝั่งนั้นเจอเส้นที่แตกออกไป ก็หมุนตัวเข้าทางนั้น นอกนั้นวิ่งแบบ P ธรรมดา · ต้องจำ เพราะป้ายอยู่ก่อนถึงทางแยก พอเซนเซอร์ถึงทางแยกจริงก็เลยป้ายไปแล้ว · ต้องนับถอยหลัง ไม่งั้นจะไปเลี้ยวที่ทางแยกถัดไปที่ไม่มีป้าย',
+      build: (): BlockProgram => ({
+        name: 'จำป้ายเขียวแล้วเลี้ยวที่ทางแยก',
+        scripts: {
+          'line.on-tick': [
+            // c = ป้ายที่เพิ่งเห็น ติดลบคือซ้าย บวกคือขวา ตัวเลขคือจะจำต่ออีกกี่ครั้ง
+            ifDo(marker('left'), [setVar('c', number(-15))]),
+            ifDo(marker('right'), [setVar('c', number(15))]),
+            ifDo(compare(readVar('c'), 'lt', number(0)), [change('c', 1)]),
+            ifDo(compare(readVar('c'), 'gt', number(0)), [change('c', -1)]),
+            // ยังจำป้ายอยู่ และเซนเซอร์ริมสุดฝั่งนั้นเจอทางที่แตกออกไป — หมุนเข้าทางนั้น
+            ifDo(both(compare(readVar('c'), 'lt', number(0)), sees(0)), [drive(-40, 60)]),
+            ifDo(both(compare(readVar('c'), 'gt', number(0)), sees(4)), [drive(60, -40)]),
+            steer(number(50), math(position(), 'mul', number(0.5)))
           ]
         }
       })

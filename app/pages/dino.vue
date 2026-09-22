@@ -125,6 +125,7 @@ async function start() {
             />
 
             <DinoTrainingPanel
+              v-if="game.learns.value || game.training.running"
               :training="game.training"
               :memory="game.memory.value"
               :learns="game.learns.value"

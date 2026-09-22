@@ -11,6 +11,7 @@ import {
   hunterColor
 } from '~/game/chase/palette'
 import type { ChaseStatus } from '~/composables/useChaseGame'
+import type { Reason } from '~/game/shared/reason'
 
 /**
  * สนามไล่จับ — วาดด้วย SVG แล้วให้ CSS เลื่อนตัวละครระหว่างช่อง
@@ -30,8 +31,10 @@ const props = withDefaults(
     status: ChaseStatus
     /** ปิดป้ายบอกสถานะ — ใช้ตอนเอาสนามไปวางเป็นภาพประกอบในหน้าความรู้ */
     quiet?: boolean
+    /** ตัวเลือกที่ AI ชั่งก่อนเดินจังหวะล่าสุด — เขียนคะแนนลงบนช่อง */
+    reasons?: Reason[]
   }>(),
-  { runnerLooked: () => [], quiet: false }
+  { runnerLooked: () => [], quiet: false, reasons: () => [] }
 )
 
 /** ตัวผี: หัวโค้ง ตัวตรง ชายกระโปรงหยัก */
@@ -68,6 +71,26 @@ const unique = (cells: Point[]): Point[] => {
 
 const hunterThinking = computed(() => unique(props.hunterLooked))
 const runnerThinking = computed(() => unique(props.runnerLooked))
+
+/** คะแนนบนช่อง — ใช้ตัวเลขตัวสุดท้ายของแต่ละตัวเลือก ซึ่งเป็นตัวที่ใช้ตัดสินจริง */
+const scores = computed(() =>
+  props.reasons.flatMap((reason, which) =>
+    reason.options.flatMap((option) =>
+      option.at
+        ? [
+            {
+              key: `${which}-${option.at.row}-${option.at.col}`,
+              at: option.at,
+              value: option.values[option.values.length - 1] ?? 0,
+              chosen: option.chosen === true
+            }
+          ]
+        : []
+    )
+  )
+)
+
+const scoreText = (value: number) => (Number.isInteger(value) ? String(value) : value.toFixed(1))
 
 const open = computed(() => exitOpen(props.match))
 
@@ -178,6 +201,30 @@ const hint = computed(() => {
           :fill="GEM_COLOR"
           transform="rotate(45)"
         />
+      </g>
+
+      <!-- คะแนนที่ AI ให้แต่ละทาง — ทางที่เลือกมีวงเขียวล้อม -->
+      <g v-for="score in scores" :key="score.key" :style="at(score.at)" class="pointer-events-none">
+        <rect
+          x="-0.42"
+          y="-0.42"
+          width="0.84"
+          height="0.84"
+          rx="0.16"
+          :fill="score.chosen ? '#d1fae5' : '#ffffff'"
+          fill-opacity="0.85"
+          :stroke="score.chosen ? '#059669' : '#c9c2e0'"
+          :stroke-width="score.chosen ? 0.08 : 0.03"
+        />
+        <text
+          y="0.11"
+          text-anchor="middle"
+          font-size="0.32"
+          font-weight="700"
+          :fill="score.chosen ? '#065f46' : '#5c5370'"
+        >
+          {{ scoreText(score.value) }}
+        </text>
       </g>
 
       <!-- จุดที่โดนจับ — วงแหวนแดงเต้นค้างไว้ให้เห็นว่าเกิดตรงไหน -->

@@ -1,11 +1,12 @@
 import { markRaw, type ShallowRef } from 'vue'
-import { viewOf } from '~/game/line/agent'
+import { viewOf, type LineMemory } from '~/game/line/agent'
 import {
   COURSES,
   DECIDE_EVERY,
   DEFAULT_COURSE,
   STEP,
   adviceFor,
+  goalWord,
   advance,
   averageOffset,
   createRun,
@@ -25,12 +26,10 @@ import { SPEEDS, type SpeedOption } from '~/game/line/pace'
 import type { TraceSummary, TraceTick } from '~/game/line/protocol'
 import { DEFAULT_PRESET_ID, LINE_PACK } from '~/game/line/blocks/pack'
 import type { AuthorMode, BlockId } from '~/game/blocks/types'
+import { usesBlock } from '~/game/blocks/program'
 import type { LogLine } from '~/game/shared/console'
 
 export type LineStatus = 'idle' | 'playing' | 'paused' | 'over' | 'error'
-
-/** ใครบังคับหุ่น — ตัวผู้เล่นเองด้วยปุ่มลูกศร หรือโปรแกรมที่ต่อไว้ */
-export type LinePilot = 'player' | 'agent'
 
 export interface LineTrace {
   running: boolean
@@ -60,19 +59,52 @@ export interface LineResult {
   record: boolean
   /** จบยังไง และควรแก้อะไรต่อ */
   advice: string
-  pilot: LinePilot
+  /** คำที่ใช้เรียกการจบแบบสำเร็จของสนามนี้ — ครบรอบ หรือถึงเส้นชัย */
+  goal: string
   ms: number
 }
 
-/** กดปุ่มลูกศรค้างไว้อยู่กี่ปุ่ม — คนเล่นบังคับด้วยการกดค้าง ไม่ใช่กดทีละครั้ง */
-export interface LineKeys {
-  up: boolean
-  left: boolean
-  right: boolean
+export interface LineMemoryInfo {
+  label?: string
+  bytes: number
+}
+
+/** ผลของการฝึกแต่ละรอบ — เวลากับว่าจบแบบสำเร็จไหม เอาไว้วาดกราฟให้เห็นว่าเวลาลดลงไหม */
+export interface LineTrainingRound {
+  time: number
+  finished: boolean
+  percent: number
+}
+
+export interface LineTraining {
+  running: boolean
+  /** เลขรอบฝึก — กดหยุดแล้วเริ่มใหม่เร็ว ๆ รอบเก่าจะได้ไม่ไปปิดสวิตช์ทับรอบใหม่ */
+  session: number
+  total: number
+  rounds: LineTrainingRound[]
+  error: string | null
 }
 
 /** คิดนานเกินนี้ถือว่าโปรแกรมค้าง — เกมเดินตามเวลาจริง รอไม่ได้นาน */
 const TIME_BUDGET = 500
+
+const MEMORY_PREFIX = 'line:memory:'
+
+const MEMORY_LIMIT = 256 * 1024
+
+/** ความจำผูกกับ "โปรแกรมไหน" — ตัวอย่างแต่ละชุด และโปรแกรมของฉันแต่ละอัน มีกล่องของตัวเอง */
+const memoryKey = (programKey: string): string => `${MEMORY_PREFIX}blocks:${programKey}`
+
+function readMemory(key: string): { data: LineMemory; bytes: number } | null {
+  if (!import.meta.client) return null
+
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? { data: JSON.parse(raw) as LineMemory, bytes: raw.length } : null
+  } catch {
+    return null
+  }
+}
 
 /** หยุดเกมทันทีที่จบ แต่รอสักครู่ก่อนเปิดแผ่นสรุป จะได้เห็นว่าไปจบตรงไหน */
 const RESULT_DELAY = 900
@@ -106,26 +138,12 @@ const emptyTrace = (): LineTrace => ({
   traced: false
 })
 
-/**
- * กำลังมอเตอร์ตอนคนเล่นบังคับเอง — ลูกศรขึ้นคือวิ่ง ซ้าย/ขวาคือเลี้ยว
- * กดเลี้ยวอย่างเดียวไม่กดขึ้น หุ่นจะหมุนอยู่กับที่ ใช้กู้ตัวตอนหลุดเส้นได้
- */
-export function playerDrive(keys: LineKeys): Drive {
-  if (keys.up && keys.left && !keys.right) return { left: 25, right: 70 }
-  if (keys.up && keys.right && !keys.left) return { left: 70, right: 25 }
-  if (keys.up) return { left: 70, right: 70 }
-  if (keys.left && !keys.right) return { left: -40, right: 40 }
-  if (keys.right && !keys.left) return { left: 40, right: -40 }
-  return { left: 0, right: 0 }
-}
-
 interface LineGame {
   run: Ref<Run>
   status: Ref<LineStatus>
   error: Ref<string | null>
   result: Ref<LineResult | null>
   overlay: Ref<boolean>
-  pilot: Ref<LinePilot>
   trace: LineTrace
   logs: Ref<LogLine[]>
   watched: ShallowRef<number[]>
@@ -134,9 +152,25 @@ interface LineGame {
   pace: ComputedRef<SpeedOption>
   /** เวลาที่ดีที่สุดของแต่ละสนามในเซสชันนี้ (วินาที) */
   best: Ref<Record<string, number>>
-  keys: LineKeys
   runner: LineRunner | null
   generation: number
+  /** กล่องความจำของโปรแกรมที่เลือกอยู่ */
+  memoryKey: ComputedRef<string>
+  memory: Ref<LineMemoryInfo | null>
+}
+
+function writeMemory(game: LineGame, data: LineMemory): void {
+  if (!import.meta.client) return
+
+  try {
+    const raw = JSON.stringify(data)
+    if (raw.length > MEMORY_LIMIT) return
+
+    localStorage.setItem(game.memoryKey.value, raw)
+    game.memory.value = { label: typeof data.label === 'string' ? data.label : undefined, bytes: raw.length }
+  } catch {
+    // เขียนลงเครื่องไม่ได้ (โหมดส่วนตัว / เต็ม) ก็แค่จำไม่ได้ เกมยังเล่นต่อได้
+  }
 }
 
 function disposeRunner(game: LineGame): void {
@@ -174,7 +208,7 @@ function finish(game: LineGame, outcome: Outcome): void {
     best,
     record,
     advice: adviceFor(run),
-    pilot: game.pilot.value,
+    goal: goalWord(run.course),
     ms: game.trace.ms
   }
 
@@ -189,6 +223,8 @@ function finish(game: LineGame, outcome: Outcome): void {
 function createRunner(game: LineGame): LineRunner {
   return new LineRunner(game.source.value, {
     timeoutMs: TIME_BUDGET,
+    memory: readMemory(game.memoryKey.value)?.data ?? null,
+    onMemory: (data) => writeMemory(game, data),
     // ไม่แตะยอด calls ตรงนี้ — tick นับแค่ในการคิดครั้งเดียว ถ้าเขียนทับ ยอดรวมทั้งรอบจะหายไป
     onTrace: (tick: TraceTick) => {
       game.trace.method = tick.method
@@ -241,13 +277,23 @@ async function agentDrive(game: LineGame, gen: number): Promise<Drive | null> {
 async function tickOnce(game: LineGame, gen: number): Promise<void> {
   const run = game.run.value
 
-  const drive = game.pilot.value === 'player' ? playerDrive(game.keys) : await agentDrive(game, gen)
+  const drive = await agentDrive(game, gen)
   if (gen !== game.generation || drive === null) return
 
   order(run, drive)
   for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
 
-  if (run.over) finish(game, run.over)
+  if (run.over) {
+    // บอกโปรแกรมว่าจบแล้วก่อนปิด worker — ความจำที่มันบันทึกตอนจบรอบจะได้ไม่หายไปพร้อม worker
+    const outcome = run.over
+    try {
+      await game.runner?.finish(viewOf(run, TIME_BUDGET))
+    } catch {
+      // onFinish พังก็ไม่ทำให้ผลของรอบนี้หายไป
+    }
+    if (gen !== game.generation) return
+    finish(game, outcome)
+  }
 }
 
 /**
@@ -297,21 +343,82 @@ async function startRun(game: LineGame, courseId: string): Promise<void> {
   game.status.value = 'playing'
 
   try {
-    if (game.pilot.value === 'agent') {
-      const current = createRunner(game)
-      game.runner = current
+    const current = createRunner(game)
+    game.runner = current
 
-      const ready = await current.start()
-      if (gen !== game.generation) return
+    const ready = await current.start()
+    if (gen !== game.generation) return
 
-      game.agentName.value = ready.name
-      game.trace.traced = ready.traced
-    }
+    game.agentName.value = ready.name
+    game.trace.traced = ready.traced
+
+    await current.begin(viewOf(game.run.value, TIME_BUDGET))
+    if (gen !== game.generation) return
 
     await loop(game, gen)
   } catch (caught) {
     if (gen !== game.generation) return
     fail(game, caught instanceof Error ? caught.message : String(caught))
+  }
+}
+
+/**
+ * วิ่งหนึ่งรอบแบบไม่วาดภาพ ไม่รอนาฬิกา — ถามโปรแกรมรัว ๆ จนรอบจบ
+ *
+ * ใช้ worker ตัวใหม่ทุกรอบเหมือนตอนเล่นจริง โปรแกรมจึงเริ่มจากศูนย์ทุกรอบ
+ * สิ่งเดียวที่ข้ามรอบได้คือความจำที่มันบันทึกเอง ซึ่งคือหัวใจของการฝึก
+ */
+async function trainOnce(game: LineGame, courseId: string, alive: () => boolean): Promise<LineTrainingRound | null> {
+  const run = createRun({ courseId })
+  const runner = new LineRunner(game.source.value, {
+    timeoutMs: TIME_BUDGET,
+    memory: readMemory(game.memoryKey.value)?.data ?? null,
+    onMemory: (data) => writeMemory(game, data)
+  })
+
+  try {
+    await runner.start()
+    await runner.begin(viewOf(run, TIME_BUDGET))
+
+    // สนามมีเวลาจำกัดอยู่แล้ว (TIME_LIMIT) ทุกรอบจึงจบเองแน่นอน
+    while (!run.over) {
+      if (!alive()) return null
+
+      const { drive } = await runner.think(viewOf(run, TIME_BUDGET))
+      order(run, drive)
+      for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
+    }
+
+    await runner.finish(viewOf(run, TIME_BUDGET))
+    return { time: run.time, finished: run.over === 'finished', percent: Math.floor(lapPercent(run)) }
+  } finally {
+    runner.dispose()
+  }
+}
+
+async function train(game: LineGame, training: LineTraining, courseId: string, runs: number): Promise<void> {
+  if (training.running) return
+
+  training.session++
+  const session = training.session
+  const alive = () => training.running && training.session === session
+
+  training.running = true
+  training.total = runs
+  training.rounds = []
+  training.error = null
+
+  try {
+    for (let round = 0; round < runs && alive(); round++) {
+      const result = await trainOnce(game, courseId, alive)
+      if (result === null || !alive()) break
+
+      training.rounds = [...training.rounds, result]
+    }
+  } catch (caught) {
+    if (training.session === session) training.error = caught instanceof Error ? caught.message : String(caught)
+  } finally {
+    if (training.session === session) training.running = false
   }
 }
 
@@ -323,18 +430,6 @@ function plainKey(event: KeyboardEvent): boolean {
   if (target?.isContentEditable) return false
 
   return !(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-}
-
-const KEY_OF: Record<string, keyof LineKeys> = {
-  ArrowUp: 'up',
-  w: 'up',
-  W: 'up',
-  ArrowLeft: 'left',
-  a: 'left',
-  A: 'left',
-  ArrowRight: 'right',
-  d: 'right',
-  D: 'right'
 }
 
 export function useLineGame() {
@@ -378,18 +473,7 @@ export function useLineGame() {
   const speed = ref(1)
   const author = ref<AuthorMode>('blocks')
 
-  const pilot = ref<LinePilot>('agent')
-
-  /**
-   * ยุ่งกับบล็อกเมื่อไร ก็ยกการบังคับให้บอทตั้งแต่ตรงนั้น
-   * ไม่งั้นแก้บล็อกไปตั้งนาน กดเริ่มแล้วยังเป็นเราขับเองอยู่ดี งงว่าโปรแกรมไม่ทำงาน
-   */
-  const onEdit = () => {
-    stop()
-    setPilot('agent')
-  }
-
-  const blocks = useBlockProgram(LINE_PACK, DEFAULT_PRESET_ID, onEdit)
+  const blocks = useBlockProgram(LINE_PACK, DEFAULT_PRESET_ID, () => stop())
 
   const trace = reactive<LineTrace>(emptyTrace())
   const logs = ref<LogLine[]>([])
@@ -405,8 +489,6 @@ export function useLineGame() {
    * ไม่เขียนลงเครื่อง เพราะเกมนี้วัดกันที่ "วิธีเลี้ยวแบบไหนเร็วกว่า" ในรอบเดียวกัน
    */
   const best = ref<Record<string, number>>({})
-
-  const keys = reactive<LineKeys>({ up: false, left: false, right: false })
 
   const activeBlock = ref<BlockId | null>(null)
 
@@ -426,13 +508,36 @@ export function useLineGame() {
     author.value === 'blocks' ? blocks.blockCounts(trace.lines) : {}
   )
 
+  const memory = ref<LineMemoryInfo | null>(null)
+  const memoryKeyOf = computed(() => memoryKey(blocks.programKey.value))
+
+  const refreshMemory = () => {
+    const found = readMemory(memoryKeyOf.value)
+    memory.value = found
+      ? { label: typeof found.data.label === 'string' ? found.data.label : undefined, bytes: found.bytes }
+      : null
+  }
+
+  watch(memoryKeyOf, refreshMemory)
+  onMounted(refreshMemory)
+
+  /** โปรแกรมนี้จำอะไรข้ามรอบไหม — ไม่จำก็ฝึกไปก็ไม่เก่งขึ้น */
+  const learns = computed(() => usesBlock(blocks.program, ['remember', 'forget', 'line.swarm-fly', 'line.swarm-score']))
+
+  const training = reactive<LineTraining>({
+    running: false,
+    session: 0,
+    total: 0,
+    rounds: [],
+    error: null
+  })
+
   const game: LineGame = {
     run,
     status,
     error,
     result,
     overlay,
-    pilot,
     trace,
     logs,
     watched,
@@ -440,19 +545,14 @@ export function useLineGame() {
     source,
     pace,
     best,
-    keys,
     runner: null,
-    generation: 0
+    generation: 0,
+    memoryKey: memoryKeyOf,
+    memory
   }
 
   function start(): Promise<void> {
     return startRun(game, options.courseId)
-  }
-
-  const releaseKeys = () => {
-    keys.up = false
-    keys.left = false
-    keys.right = false
   }
 
   function stop(): void {
@@ -468,7 +568,6 @@ export function useLineGame() {
     overlay.value = false
     result.value = null
     error.value = null
-    releaseKeys()
     run.value = freshRun(options.courseId)
   }
 
@@ -483,14 +582,6 @@ export function useLineGame() {
   /** ปิดแผ่นสรุปแต่ยังไม่เริ่มใหม่ — สนามค้างไว้ให้ดูรอยที่วิ่งมา */
   function closeResult(): void {
     overlay.value = false
-  }
-
-  /** ผู้เล่นกดหรือปล่อยปุ่มบังคับ — กดตอนยังไม่เริ่มถือว่าเริ่มเลย */
-  function press(key: keyof LineKeys, on: boolean): void {
-    if (pilot.value !== 'player') return
-
-    keys[key] = on
-    if (on && status.value === 'idle') void start()
   }
 
   function setCourse(id: string, force = false): void {
@@ -520,16 +611,34 @@ export function useLineGame() {
     if (options.courseId === id) setCourse(DEFAULT_COURSE, true)
   }
 
-  /** สลับว่าใครบังคับ — เปลี่ยนตอนกำลังวิ่งอยู่ก็ถือว่ารอบนั้นจบไปเลย */
-  function setPilot(value: LinePilot): void {
-    if (value === pilot.value) return
-
-    stop()
-    pilot.value = value
-  }
-
   const clearLogs = () => {
     logs.value = []
+  }
+
+  /** ฝึกรัว ๆ หลายรอบบนสนามที่เลือกอยู่ — ต้องไม่ได้กำลังวิ่งอยู่ */
+  function trainRuns(runs: number): Promise<void> {
+    stop()
+    const count = Math.min(1000, Math.max(1, Math.round(Number(runs) || 1)))
+    return train(game, training, options.courseId, count)
+  }
+
+  function stopTraining(): void {
+    training.running = false
+  }
+
+  function clearMemory(): void {
+    if (!import.meta.client) return
+
+    try {
+      localStorage.removeItem(memoryKeyOf.value)
+    } catch {
+      // ลบไม่ได้ก็ปล่อยไว้ การ์ดจะยังโชว์ของเดิม
+      return
+    }
+
+    memory.value = null
+    training.rounds = []
+    training.total = 0
   }
 
   /** ปุ่มเว้นวรรคทำหน้าที่ต่างกันไปตามสถานะ — เริ่ม พัก หรือวิ่งต่อ */
@@ -542,39 +651,23 @@ export function useLineGame() {
   function onKeyDown(event: KeyboardEvent): void {
     if (!plainKey(event)) return
 
-    const key = KEY_OF[event.key]
-    if (key && pilot.value === 'player') {
-      event.preventDefault()
-      press(key, true)
-      return
-    }
-
     if (event.key === ' ' || event.key === 'Enter') {
       event.preventDefault()
       toggle()
     }
   }
 
-  function onKeyUp(event: KeyboardEvent): void {
-    const key = KEY_OF[event.key]
-    if (key) keys[key] = false
-  }
-
   onMounted(() => {
     loadCourses()
     window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    // สลับแท็บไปทั้งที่ยังกดปุ่มค้าง keyup จะไม่มาถึง — ปล่อยทุกปุ่มไว้ก่อน หุ่นจะได้ไม่วิ่งเตลิด
-    window.addEventListener('blur', releaseKeys)
   })
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeyDown)
-    window.removeEventListener('keyup', onKeyUp)
-    window.removeEventListener('blur', releaseKeys)
   })
 
   onScopeDispose(() => {
+    training.running = false
     disposeRunner(game)
   })
 
@@ -593,7 +686,6 @@ export function useLineGame() {
     speed,
     pace,
     author,
-    pilot,
     blocks,
     source,
     agentName,
@@ -605,15 +697,18 @@ export function useLineGame() {
     blockCounts,
     best,
     bestTime: computed<number | null>(() => best.value[options.courseId] ?? null),
-    keys,
+    memory,
+    learns,
+    training,
+    train: trainRuns,
+    stopTraining,
+    clearMemory,
 
     start,
     stop,
     pause,
     resume,
     closeResult,
-    press,
-    setCourse,
-    setPilot
+    setCourse
   }
 }

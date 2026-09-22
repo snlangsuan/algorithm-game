@@ -2,6 +2,7 @@ import type { Matcher, Node, ParseContext } from '~/game/blocks/importer'
 import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { MAZE_EXPLAIN } from './explain'
 
 const SIDES: SelectOption[] = [
   { value: 'ahead', label: 'ข้างหน้า' },
@@ -46,6 +47,56 @@ const PLAN_HAT: BlockSpec = {
   parts: [{ type: 'text', text: 'เมื่อวางแผนเส้นทาง' }],
   emit: () => {}
 }
+
+const HAT_START: BlockSpec = {
+  kind: 'maze.on-start',
+  shape: 'hat',
+  category: 'event',
+  title: 'เมื่อเริ่มรอบ',
+  hint: 'ทำครั้งเดียวก่อนออกเดิน — เหมาะกับการโหลดสิ่งที่จำไว้จากรอบก่อน',
+  parts: [{ type: 'text', text: 'เมื่อเริ่มรอบ' }],
+  emit: () => {}
+}
+
+const HAT_FINISH: BlockSpec = {
+  kind: 'maze.on-finish',
+  shape: 'hat',
+  category: 'event',
+  title: 'เมื่อจบรอบ',
+  hint: 'ทำครั้งเดียวตอนรอบจบ ไม่ว่าจะถึงทางออกหรือไม่ — เหมาะกับการจำสิ่งที่ได้ผลไว้ใช้รอบหน้า เช่นทิ้งกลิ่นของมด',
+  parts: [{ type: 'text', text: 'เมื่อจบรอบ' }],
+  emit: () => {}
+}
+
+const ANT_MODES: SelectOption[] = [
+  { value: 'scent', label: 'สุ่มตามกลิ่น' },
+  { value: 'strongest', label: 'กลิ่นแรงที่สุด' }
+]
+
+/** บล็อกของฝูงมด (ACO) — กลิ่นถูกจำไว้ข้ามรอบเอง ใช้คู่กับหัวบล็อก "เมื่อถึงตาเดิน" กับ "เมื่อจบรอบ" */
+const ANT_BLOCKS: BlockSpec[] = [
+  {
+    kind: 'maze.ant-walk',
+    shape: 'statement',
+    category: 'action',
+    title: 'มด: เดินตามกลิ่น',
+    hint: 'มดเห็นแค่ช่องข้าง ๆ ตัว — "สุ่มตามกลิ่น" ให้ทางที่กลิ่นฟีโรโมนแรง ถูก (ไม่ใช่โคลน) และยังไม่เคยเหยียบ มีโอกาสถูกเลือกมากกว่า · "กลิ่นแรงที่สุด" ไม่สุ่ม ใช้ดูว่าฝูงจำทางไหนไว้',
+    parts: [
+      { type: 'text', text: 'มด: เดินไปทางที่' },
+      { type: 'field', name: 'mode', options: ANT_MODES }
+    ],
+    emit: (node, ctx) => ctx.line(node, `return (this.facing = this.antStep(${quote(ctx.field(node, 'mode'))}))`)
+  },
+  {
+    kind: 'maze.ant-scent',
+    shape: 'statement',
+    category: 'data',
+    title: 'มด: ทิ้งกลิ่น',
+    hint: 'ถ้ามดตัวนี้ถึงทางออก ตัดวงวนออกจากทางที่มันเดินมา แล้วทิ้งกลิ่นตามทางนั้น ทางยิ่งถูกกลิ่นยิ่งแรง — กลิ่นเก่าระเหยไปทุกรอบ ใช้ในหัวบล็อก "เมื่อจบรอบ"',
+    parts: [{ type: 'text', text: 'มด: ทิ้งกลิ่นตามทางที่เดินมา' }],
+    emit: (node, ctx) => ctx.line(node, 'this.antLayScent()')
+  }
+]
 
 const PLAN_BLOCKS: BlockSpec[] = [
   {
@@ -552,6 +603,14 @@ const PLAN_VALUES: Array<[string, string]> = [
 ]
 
 const STATEMENT_PARSERS: Matcher[] = [
+  (node, ctx) => (node.type === 'ExpressionStatement' && ctx.call(node.expression, 'antLayScent') ? ctx.make('maze.ant-scent') : null),
+  (node, ctx) => {
+    const back = ctx.returned(node)
+    if (!back || back.type !== 'AssignmentExpression' || !ctx.thisProp(back.left, 'facing')) return null
+    const args = ctx.call(back.right, 'antStep')
+    const mode = args ? ctx.str(args[0]!) : null
+    return mode && ANT_MODES.some((option) => option.value === mode) ? ctx.make('maze.ant-walk', { mode }) : null
+  },
   ...PLAN_STATEMENTS.map<Matcher>(
     ([name, kind]) =>
       (node, ctx) =>
@@ -663,6 +722,16 @@ function unwrapPlan(statements: Node[], ctx: ParseContext): Node[] {
   })
 }
 
+/** ตัดบรรทัดที่ codegen เขียนให้เองในหัวบล็อกเริ่มรอบ/จบรอบออก ก่อนอ่านโค้ดกลับเป็นบล็อก */
+const unwrapHere = (statements: Node[], ctx: ParseContext): Node[] =>
+  statements.filter(
+    (node) =>
+      !(
+        node.type === 'ExpressionStatement' &&
+        (ctx.thisProp(node.expression?.left, 'here') || ctx.thisProp(node.expression?.left, 'result'))
+      )
+  )
+
 function unwrap(statements: Node[], ctx: ParseContext): Node[] {
   const retry = statements.find(
     (node) => node.type === 'ForStatement' && node.test?.right?.value === RETRIES
@@ -682,13 +751,44 @@ function unwrap(statements: Node[], ctx: ParseContext): Node[] {
 
 export const MAZE_PACK = createPack({
   id: 'maze',
-  blocks: [...BLOCKS, ...PLAN_BLOCKS],
+  blocks: [...BLOCKS, ...ANT_BLOCKS, ...PLAN_BLOCKS],
+  explain: MAZE_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'MazeAgent',
     fields: [`facing = 'right'`],
     helpers: HELPERS,
+    memory: true,
     methods: [
+      {
+        hat: HAT_START,
+        name: 'onStart',
+        // ไม่ได้ต่ออะไรไว้ก็ไม่ต้องเขียนเมธอดเปล่า ๆ ให้รก
+        skipWhenEmpty: true,
+        unwrap: unwrapHere,
+        write: (writer) => {
+          writer.push('onStart(state) {')
+          writer.indent(1)
+          writer.push('this.here = state')
+          writer.body()
+          writer.indent(-1)
+          writer.push('}')
+        }
+      },
+      {
+        hat: HAT_FINISH,
+        name: 'onFinish',
+        skipWhenEmpty: true,
+        unwrap: unwrapHere,
+        write: (writer) => {
+          writer.push('onFinish(result) {')
+          writer.indent(1)
+          writer.push('this.result = result')
+          writer.body()
+          writer.indent(-1)
+          writer.push('}')
+        }
+      },
       {
         hat: HAT,
         name: 'step',
@@ -875,6 +975,19 @@ export const MAZE_PACK = createPack({
           ),
           block('if', {}, { cond: not(wall('ahead')) }, { then: [walk()] })
           ]
+        }
+      })
+    },
+    {
+      id: 'ants',
+      name: 'ฝูงมดหาทาง (ACO)',
+      description:
+        'มดไม่มีแผนที่ เห็นแค่ช่องข้าง ๆ กับกลิ่นที่มดตัวก่อน ๆ ทิ้งไว้ ทุกตาสุ่มเลือกทางโดยทางที่กลิ่นแรง ไม่ใช่โคลน และยังไม่เคยเหยียบ มีโอกาสมากกว่า ถึงทางออกแล้วทิ้งกลิ่นตามทางที่เดินมา (ตัดวงวนออกก่อน) ทางยิ่งถูกกลิ่นยิ่งแรง — กด "ฝึก" ปล่อยมดทีละร้อยตัว แล้วเปลี่ยนบล็อกเป็น "กลิ่นแรงที่สุด" ดูทางที่ฝูงเลือก · ลองกับเขาวงกตแบบมีทางวน (braid) ที่มีหลายทางให้เลือก',
+      build: (): BlockProgram => ({
+        name: 'ฝูงมดหาทาง (ACO)',
+        scripts: {
+          'maze.on-turn': [block('maze.ant-walk', { mode: 'scent' })],
+          'maze.on-finish': [block('maze.ant-scent')]
         }
       })
     }

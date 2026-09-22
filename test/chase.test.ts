@@ -5,7 +5,7 @@ import { generate } from '~/game/blocks/codegen'
 import { createBlock } from '~/game/blocks/program'
 import { normalize } from '~/game/blocks/pack'
 import { TOPICS } from '~/data/algorithms'
-import { figureFor } from '~/data/algorithm-figures'
+import { FLOCK_WEIGHTS, figureFor, flockDirection } from '~/data/algorithm-figures'
 import { CHASE_PACK } from '~/game/chase/blocks/pack'
 import { RUNNER_PACK } from '~/game/chase/blocks/runner'
 import {
@@ -466,6 +466,33 @@ function humanMove(match: Match): Direction | null {
  * เล่นหนึ่งรอบจนจบ — ฝ่ายไล่เป็น AI เสมอ
  * ส่วนฝ่ายหนีจะเป็นคนเล่นสมมติ หรือ AI จาก RUNNER_PACK ก็ได้ ตามที่ส่ง runnerPreset มา
  */
+/** เหมือน playRound แต่รับตัวผู้ไล่ล่าที่สร้างไว้แล้ว — ใช้กับตัวอย่างที่แก้น้ำหนักเอง */
+function playRoundWith(arenaId: string, hunters: number, speed: number, hunterAgent: ChaseAgent, runnerPreset: string) {
+  const match = createMatch(findArena(arenaId), { hunters, hunterSpeed: speed })
+  const runnerAgent = agentOf(runnerPreset, RUNNER_PACK)
+
+  for (let tick = 1; tick <= TICK_LIMIT; tick++) {
+    match.tick = tick
+    const heroBefore = { ...match.hero }
+
+    const state = viewOf(match, 1000)
+    const raw = runnerAgent.step({ ...state, me: heroAsMover(match) })
+    stepHero(match, typeof raw === 'string' ? (raw as Direction) : null)
+
+    if (match.over === 'escaped') return { outcome: 'escaped', tick, taken: match.taken }
+    if (catcher(match, heroBefore, match.hunters.map((hunter) => ({ ...hunter.at }))) !== null) {
+      return { outcome: 'caught', tick, taken: match.taken }
+    }
+
+    const before = match.hunters.map((hunter) => ({ ...hunter.at }))
+    hunt(match, hunterAgent, speed)
+
+    if (catcher(match, heroBefore, before) !== null) return { outcome: 'caught', tick, taken: match.taken }
+  }
+
+  return { outcome: 'timeout', tick: TICK_LIMIT, taken: match.taken }
+}
+
 function playRound(
   arenaId: string,
   hunters: number,
@@ -919,4 +946,77 @@ test('ฉากตั้งต้นที่ต่างกัน ทำให�
   }
 
   assert.ok(outcomes.size >= 5, `เล่น 8 รอบได้ผลแค่ ${outcomes.size} แบบ — ยังซ้ำเดิมเกินไป`)
+})
+
+// ---------- ฝูงปลา (Boids) ----------
+
+/** ตัวอย่างฝูงปลาที่เปลี่ยนน้ำหนักได้ — จำลองสิ่งที่หน้าความรู้ชวนให้ลองแก้ */
+function flockWith(separate: number, align: number, gather: number): string {
+  return `flock:${separate}/${align}/${gather}`
+}
+
+const flockAgents = new Map<string, ChaseAgent>()
+
+function flockAgent(key: string): ChaseAgent {
+  const found = flockAgents.get(key)
+  if (found) return found
+
+  const [separate, align, gather] = key.slice('flock:'.length).split('/').map(Number)
+  const preset = CHASE_PACK.presets.find((item) => item.id === 'flock')!
+  const program = normalize(preset.build(), CHASE_PACK)
+  const flock = program.scripts['chase.on-turn']![0]!
+  flock.inputs.separate!.fields.value = separate!
+  flock.inputs.align!.fields.value = align!
+  flock.inputs.gather!.fields.value = gather!
+
+  const { code } = generate(program, CHASE_PACK)
+  const factory = new Function('ChaseAgent', ...Object.keys(AGENT_GLOBALS), `"use strict";\n${code}\n;return Agent;`)
+  const agent = new (factory(ChaseAgent, ...Object.values(AGENT_GLOBALS)))() as ChaseAgent
+  flockAgents.set(key, agent)
+  return agent
+}
+
+/** นับว่าจับได้กี่เกม ทุกสนาม × ผู้ไล่ล่าสองและสามตัว × ฝ่ายหนีสองแบบ */
+function catches(play: (arena: string, hunters: number, runner: 'evade' | 'field') => { outcome: string }): number {
+  let caught = 0
+  for (const arena of ARENAS) {
+    for (const hunters of [2, 3]) {
+      for (const runner of ['evade', 'field'] as const) {
+        if (play(arena.id, hunters, runner).outcome === 'caught') caught++
+      }
+    }
+  }
+  return caught
+}
+
+test('ฝูงปลา — กฎที่เขียนซ้ำไว้วาดภาพ เลือกทางเดียวกับโค้ดที่บล็อกแปลงออกมาจริง', () => {
+  const agent = agentOf('flock')
+
+  for (const arena of ARENAS) {
+    const match = createMatch(arena, { hunters: 3, hunterSpeed: 1 })
+    for (let tick = 0; tick < 25; tick++) {
+      const state = viewOf(match, 1000)
+      for (const hunter of match.hunters) {
+        const fromBlocks = agent.step({ ...state, me: state.hunters[hunter.index]! })
+        const fromRule = flockDirection(match, hunter, FLOCK_WEIGHTS.separate, FLOCK_WEIGHTS.align, FLOCK_WEIGHTS.gather)
+        assert.equal(fromRule, fromBlocks, `${arena.id} จังหวะ ${tick} ตัวที่ ${hunter.index}`)
+      }
+      for (const hunter of match.hunters) moveHunter(match, hunter, agent.step({ ...viewOf(match, 1000), me: viewOf(match, 1000).hunters[hunter.index]! }) as Direction)
+    }
+  }
+})
+
+test('หน้าฝูงปลา — กฎฝูงเบา ๆ จับได้บ่อยกว่าไล่ตรง ๆ แต่ถ้าหนักเกินฝูงวนหลบกันเอง', () => {
+  const light = catches((arena, hunters, runner) => playRoundWith(arena, hunters, 0.65, agentOf('flock'), runner))
+  const none = catches((arena, hunters, runner) => playRound(arena, hunters, 0.65, 'pursuit', runner))
+  const heavy = catches((arena, hunters, runner) => playRoundWith(arena, hunters, 0.65, flockAgent(flockWith(2, 1, 0.3)), runner))
+  const zero = catches((arena, hunters, runner) => playRoundWith(arena, hunters, 0.65, flockAgent(flockWith(0, 0, 0)), runner))
+
+  assert.equal(light, 12)
+  assert.equal(none, 10)
+  assert.equal(zero, none, 'ตั้งน้ำหนักฝูงเป็นศูนย์หมดต้องจับได้เท่าไล่ตามทางที่สั้นที่สุด')
+  assert.equal(heavy, 5)
+
+  const text = textOf('boids')
+  for (const number of ['12', '10', '5']) assert.ok(text.includes(`${number} เกม`), `หน้าฝูงปลาไม่ได้พูดถึง ${number} เกม แล้ว`)
 })

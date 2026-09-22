@@ -746,7 +746,7 @@ export function useOthelloGame() {
 
   const learns = (player: Player): boolean =>
     sides[player].author === 'blocks'
-      ? usesBlock(blocks[player].program, ['remember', 'forget'])
+      ? usesBlock(blocks[player].program, ['remember', 'forget', 'othello.swarm-fly', 'othello.swarm-score'])
       : sides[player].code.includes('saveMemory(')
 
   const blockCounts = (player: Player): Record<BlockId, number> =>

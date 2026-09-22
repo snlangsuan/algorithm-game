@@ -42,13 +42,18 @@ const NOT_ALGORITHMS: Record<string, string> = {
     'โปรแกรมตั้งต้นให้เด็กลากแก้ ดูเซนเซอร์ตัวซ้ายตัวเดียวและไม่มีกฎเลี้ยวขวาเลย จึงครบรอบได้แค่สนามวงรี ไม่ใช่อัลกอริทึม'
 }
 
+/** ตัวอย่างที่ตั้งใจไม่ให้มีหน้าความรู้ — ผู้ใช้ขอไว้ พร้อมเหตุผล */
+const NO_TOPIC: Record<string, string> = {
+  'othello/ruthless': 'โหมดโหดเป็นคู่ต่อสู้ไว้ท้าทาย ไม่ใช่บทเรียน — ผู้ใช้ขอไม่ให้ใส่ในหน้าความรู้'
+}
+
 const PACKS: BlockPack[] = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK]
 
 test('ทุกตัวอย่างที่เลือกได้ในเกม มีหน้าความรู้ของตัวเอง', () => {
   for (const pack of PACKS) {
     for (const preset of pack.presets) {
       const ref = `${pack.id}/${preset.id}`
-      if (ref in NOT_ALGORITHMS) continue
+      if (ref in NOT_ALGORITHMS || ref in NO_TOPIC) continue
 
       const topic = TOPICS.find(
         (item) => item.preset?.game === pack.id && item.preset.id === preset.id

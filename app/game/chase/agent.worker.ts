@@ -15,6 +15,7 @@ import {
 } from './engine'
 import { instrument } from '../shared/instrument'
 import { captureConsole, clearLog, pushLog, takeLog } from '../shared/console'
+import { cleanReason, type Reason } from '../shared/reason'
 import type { MoverMove, WorkerRequest, WorkerResponse } from './protocol'
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope
@@ -33,6 +34,12 @@ const CLOCK_EVERY = 2048
 let agent: ChaseAgent | null = null
 let traced = false
 let looked: Point[] = []
+
+/** เหตุผลล่าสุดที่ตัวที่กำลังคิดบอกไว้ — ล้างทุกครั้งก่อนถามตัวถัดไป */
+let reason: Reason | null = null
+
+/** อ่านผ่านฟังก์ชัน — ค่าถูกตั้งจากในโค้ดของผู้เล่น ตัวตรวจชนิดจึงมองไม่เห็นว่าเปลี่ยนไปแล้ว */
+const heard = (): Reason | null => reason
 
 let currentLine = 0
 let lineCounts: Record<number, number> = {}
@@ -179,6 +186,15 @@ return Agent;`
     }
   })
 
+  Object.defineProperty(instance, 'reason', {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value(why: unknown) {
+      reason = cleanReason(why)
+    }
+  })
+
   return { instance: watch(instance), traced: marked.ok && marked.lines.length > 0 }
 }
 
@@ -219,8 +235,11 @@ function decide(
   mates: MoverView[] = []
 ): MoverMove {
   const index = me.index
+  reason = null
   const dir = toDirection(agent!.step({ ...state, me }), me)
-  if (!dir) return { index, dir: null, ok: true }
+  const said = heard()
+  const why = said ? { reason: { ...said, who: label.trim() } } : {}
+  if (!dir) return { index, dir: null, ok: true, ...why }
 
   const next = stepInto(me, dir)
 
@@ -229,7 +248,8 @@ function decide(
       index,
       dir: null,
       ok: false,
-      note: `${label}สั่งเดิน${DIRECTION_LABEL[dir]}ไปชนกำแพง จึงยืนอยู่กับที่`
+      note: `${label}สั่งเดิน${DIRECTION_LABEL[dir]}ไปชนกำแพง จึงยืนอยู่กับที่`,
+      ...why
     }
   }
 
@@ -242,11 +262,12 @@ function decide(
       index,
       dir: null,
       ok: false,
-      note: `${label}จะเดิน${DIRECTION_LABEL[dir]}ไปทับตัวที่ ${blocker.index + 1} จึงยืนอยู่กับที่ — ลองให้แต่ละตัวเล็งคนละที่ดู`
+      note: `${label}จะเดิน${DIRECTION_LABEL[dir]}ไปทับตัวที่ ${blocker.index + 1} จึงยืนอยู่กับที่ — ลองให้แต่ละตัวเล็งคนละที่ดู`,
+      ...why
     }
   }
 
-  return { index, dir, ok: true }
+  return { index, dir, ok: true, ...why }
 }
 
 function run<T>(id: number, work: () => T): T {

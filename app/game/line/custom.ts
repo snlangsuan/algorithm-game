@@ -65,9 +65,12 @@ export function parseCourses(raw: unknown): Course[] {
     if (typeof id !== 'string' || !id.startsWith('custom-') || seen.has(id)) continue
     if (typeof name !== 'string' || typeof smooth !== 'boolean') continue
     if (!Array.isArray(points) || points.length > MAX_POINTS || !points.every(isPoint)) continue
-    if (!Array.isArray(paint) || !paint.every(isPaint)) continue
+    if (!Array.isArray(paint)) continue
+    // โซนแดงถูกถอดออกจากเกมแล้ว — สนามที่วาดไว้ก่อนหน้านั้นยังเปิดได้ ท่อนแดงกลายเป็นเส้นดำ
+    const repainted = paint.map((item) => (item === 'red' ? 'black' : item))
+    if (!repainted.every(isPaint)) continue
 
-    const course = customCourse({ id, name, points, paint, smooth })
+    const course = customCourse({ id, name, points, paint: repainted, smooth })
     if (checkCourse(course) !== null) continue
 
     seen.add(id)

@@ -1,26 +1,41 @@
 <script setup lang="ts">
 const open = defineModel<boolean>({ required: true })
 
-withDefaults(
-  defineProps<{ title?: string; description?: string; wide?: boolean; full?: boolean }>(),
-  { wide: false, full: false }
+const props = withDefaults(
+  defineProps<{
+    title?: string
+    description?: string
+    wide?: boolean
+    full?: boolean
+    /** ลอยเหนือหน้าต่างอื่นที่เปิดค้างอยู่ — เช่นการ์ดอธิบายบล็อกที่เปิดจากในตัวแก้บล็อก */
+    above?: boolean
+  }>(),
+  { wide: false, full: false, above: false }
 )
 
 const close = () => (open.value = false)
 
 const onKeydown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape') close()
+  if (event.key !== 'Escape' || !open.value) return
+  // หน้าต่างที่ลอยอยู่บนสุดปิดตัวเดียว หน้าต่างข้างใต้ยังเปิดค้างไว้
+  if (props.above) event.stopImmediatePropagation()
+  close()
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+// หน้าต่างลอยบนต้องได้ยินปุ่ม Esc ก่อนตัวอื่น จึงฟังตั้งแต่ขาลง (capture)
+onMounted(() => window.addEventListener('keydown', onKeydown, props.above))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, props.above))
 </script>
 
 <template>
   <ClientOnly>
     <Teleport to="body">
       <Transition name="page">
-        <div v-if="open" class="fixed inset-0 z-100 flex items-end justify-center p-0 sm:items-center sm:p-6">
+        <div
+          v-if="open"
+          class="fixed inset-0 flex items-end justify-center p-0 sm:items-center sm:p-6"
+          :class="above ? 'z-110' : 'z-100'"
+        >
           <div class="absolute inset-0 bg-ink/40 backdrop-blur-sm" @click="close" />
 
           <div

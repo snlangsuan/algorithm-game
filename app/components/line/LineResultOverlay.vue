@@ -16,9 +16,9 @@ defineEmits<{ again: []; close: [] }>()
 
 const finished = computed(() => props.result.outcome === 'finished')
 
-const title = computed(() => (finished.value ? `ครบรอบใน ${secondsOf(props.result.time)} วินาที` : OUTCOME_LABEL[props.result.outcome]))
-
-const pilotLabel = computed(() => (props.result.pilot === 'player' ? 'คุณขับเอง' : props.agentName))
+const title = computed(() =>
+  finished.value ? `${props.result.goal}ใน ${secondsOf(props.result.time)} วินาที` : OUTCOME_LABEL[props.result.outcome]
+)
 
 const stats = computed(() => [
   { label: 'เวลา', value: `${secondsOf(props.result.time)} วิ` },
@@ -52,7 +52,7 @@ const stats = computed(() => [
           </span>
         </h2>
         <p class="mt-1 text-xs leading-relaxed text-ink-muted">{{ result.advice }}</p>
-        <p class="mt-1 truncate text-[11px] text-ink-subtle">รอบนี้: {{ pilotLabel }}</p>
+        <p class="mt-1 truncate text-[11px] text-ink-subtle">รอบนี้: {{ agentName }}</p>
       </div>
 
       <dl class="grid grid-cols-2 gap-2 sm:grid-cols-4">

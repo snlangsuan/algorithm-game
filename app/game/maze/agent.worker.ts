@@ -1,4 +1,4 @@
-import { AGENT_GLOBALS, MazeAgent, type MazeState, type PathResult, type StepResult } from './agent'
+import { AGENT_GLOBALS, MazeAgent, type MazeMemory, type MazeState, type PathResult, type StepResult } from './agent'
 import { findDirection, type Point } from './engine'
 import { instrument } from '../shared/instrument'
 import { captureConsole, clearLog, pushLog, takeLog } from '../shared/console'
@@ -142,7 +142,7 @@ function watch(instance: MazeAgent): MazeAgent {
   return instance
 }
 
-function build(code: string): { instance: MazeAgent; mode: AgentMode; traced: boolean } {
+function build(code: string, memory: MazeMemory | null): { instance: MazeAgent; mode: AgentMode; traced: boolean } {
 
   const marked = instrument(code, LINE_MARKER)
 
@@ -187,6 +187,21 @@ return Agent;`
   if (!plans && !walks) {
     throw new Error('Agent ยังไม่ได้ override เมธอด solve(state) หรือ step(state)')
   }
+
+  instance.memory = memory
+
+  // ความจำส่งกลับไปให้หน้าเว็บเขียนลงเครื่อง — worker ตายเมื่อไรของในนี้ก็หายไปด้วย
+  Object.defineProperty(instance, 'saveMemory', {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value(data: MazeMemory) {
+      if (!data || typeof data !== 'object') throw new Error('saveMemory() ต้องรับ object ธรรมดา')
+
+      instance.memory = data
+      post({ type: 'memory', data })
+    }
+  })
 
   Object.defineProperty(instance, 'visit', {
     configurable: true,
@@ -284,7 +299,7 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
   try {
     switch (request.type) {
       case 'init': {
-        const built = build(request.code)
+        const built = build(request.code, request.memory)
         agent = built.instance
         mode = built.mode
         traced = built.traced
@@ -322,13 +337,14 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
 
       case 'finish': {
         agent?.onFinish({ ok: request.ok, steps: request.steps, cost: request.cost })
+        post({ type: 'done', id: request.id })
         break
       }
     }
   } catch (error) {
     post({
       type: 'error',
-      id: request.type === 'solve' || request.type === 'step' ? request.id : null,
+      id: request.type === 'solve' || request.type === 'step' || request.type === 'finish' ? request.id : null,
       message: describe(error)
     })
   }

@@ -1,4 +1,4 @@
-import type { MazeState } from './agent'
+import type { MazeMemory, MazeState } from './agent'
 import type { Point } from './engine'
 import type { LogLine } from '../shared/console'
 import type {
@@ -19,6 +19,12 @@ export interface RunnerOptions {
   onSummary?: (summary: TraceSummary) => void
 
   onLog?: (lines: LogLine[]) => void
+
+  /** ความจำจากรอบก่อน ๆ — ส่งให้โปรแกรมอ่านผ่าน this.memory */
+  memory?: MazeMemory | null
+
+  /** โปรแกรมสั่งบันทึกความจำ — คนเรียกเป็นคนเขียนลงเครื่อง */
+  onMemory?: (data: MazeMemory) => void
 }
 
 export interface PlanResult {
@@ -40,7 +46,8 @@ export interface AgentReady {
 }
 
 interface Pending {
-  resolve: (value: PlanResult | StepOutcome) => void
+  /** solve / step ได้ผลกลับมา ส่วน finish ได้แค่ undefined ว่าทำเสร็จแล้ว */
+  resolve: (value: PlanResult | StepOutcome | undefined) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -56,12 +63,16 @@ export class MazeRunner {
   private readonly onTrace?: (tick: TraceTick) => void
   private readonly onSummary?: (summary: TraceSummary) => void
   private readonly onLog?: (lines: LogLine[]) => void
+  private readonly onMemory?: (data: MazeMemory) => void
+  private readonly memory: MazeMemory | null
 
   constructor(private readonly code: string, options: RunnerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 5000
     this.onTrace = options.onTrace
     this.onSummary = options.onSummary
     this.onLog = options.onLog
+    this.onMemory = options.onMemory
+    this.memory = options.memory ?? null
   }
 
   get name(): string {
@@ -131,7 +142,7 @@ export class MazeRunner {
 
       worker.addEventListener('message', onMessage)
       worker.addEventListener('error', onError)
-      this.send({ type: 'init', code: this.code })
+      this.send({ type: 'init', code: this.code, memory: this.memory })
     })
   }
 
@@ -147,8 +158,12 @@ export class MazeRunner {
     this.send({ type: 'start', state })
   }
 
-  notifyFinish(ok: boolean, steps: number, cost: number): void {
-    this.send({ type: 'finish', ok, steps, cost })
+  /**
+   * บอกว่ารอบจบแล้ว — รอจน onFinish ทำเสร็จก่อนค่อยปิด worker
+   * ไม่งั้นความจำที่โปรแกรมบันทึกตอนจบรอบ (เช่นกลิ่นของฝูงมด) จะหายไปพร้อม worker ก่อนส่งออกมาทัน
+   */
+  async finish(ok: boolean, steps: number, cost: number): Promise<void> {
+    await this.ask((id) => ({ type: 'finish', id, ok, steps, cost }))
   }
 
   dispose(): void {
@@ -162,7 +177,7 @@ export class MazeRunner {
     this.worker = null
   }
 
-  private ask(make: (id: number) => WorkerRequest): Promise<PlanResult | StepOutcome> {
+  private ask(make: (id: number) => WorkerRequest): Promise<PlanResult | StepOutcome | undefined> {
     if (!this.worker) return Promise.reject(new Error('agent ยังไม่พร้อมทำงาน'))
 
     const id = ++this.seq
@@ -203,6 +218,11 @@ export class MazeRunner {
       return
     }
 
+    if (data.type === 'memory') {
+      this.onMemory?.(data.data)
+      return
+    }
+
     const id = data.id
     if (id === null) return
 
@@ -216,6 +236,8 @@ export class MazeRunner {
       pending.resolve({ path: data.path, explored: data.explored, timeline: data.timeline })
     } else if (data.type === 'move') {
       pending.resolve({ move: data.move, explored: data.explored, timeline: data.timeline })
+    } else if (data.type === 'done') {
+      pending.resolve(undefined)
     }
     else pending.reject(new Error(data.message))
   }

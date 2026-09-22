@@ -18,6 +18,7 @@ import {
   type Neighbor,
   type Point
 } from './engine'
+import { chooseStep, emptyColony, layScent, readColony, strongestStep, type Colony } from './ants'
 
 export interface MazeState {
 
@@ -45,6 +46,12 @@ export interface MazeState {
   timeBudget: number
 }
 
+/** ของที่จำไว้ข้ามรอบ — เก็บลงเครื่องเป็น JSON รอบหน้าเปิดมาก็ยังอยู่ */
+export interface MazeMemory {
+  label?: string
+  [key: string]: unknown
+}
+
 export type PathResult = Array<Point | [number, number] | Direction> | null
 
 export type StepResult = Point | [number, number] | Direction | null
@@ -70,6 +77,52 @@ export class MazeAgent {
   onStart(_state: MazeState): void {}
 
   onFinish(_result: { ok: boolean; steps: number; cost: number }): void {}
+
+  /** ความจำที่เก็บไว้จากรอบก่อน ๆ — ยังไม่เคยจำอะไรเลยก็เป็น null */
+  memory: MazeMemory | null = null
+
+  /** บันทึกความจำลงเครื่อง — ตัวรันเป็นคนเขียนทับเมธอดนี้ */
+  saveMemory(_data: MazeMemory): void {}
+
+  /** ผลของรอบที่เพิ่งจบ — หัวบล็อก "เมื่อจบรอบ" ตั้งไว้ให้ก่อนทำบล็อกข้างใน */
+  result: { ok: boolean; steps: number; cost: number } | null = null
+
+  /** ฝูงมดที่อ่านจากความจำครั้งแรกของรอบนี้ */
+  private colony: Colony | null | undefined = undefined
+
+  /** ทางที่มดตัวนี้เดินมาทั้งหมด รวมวงวน — ตัดวงวนทีหลังตอนทิ้งกลิ่น */
+  private antTrail: Point[] = []
+
+  /**
+   * มด: เลือกทางหนึ่งก้าว — 'scent' สุ่มโดยทางที่กลิ่นแรง ถูก และยังไม่เคยเหยียบมีโอกาสมากกว่า
+   * 'strongest' ตามกลิ่นที่แรงที่สุดตรง ๆ ไม่สุ่ม ใช้ดูว่าฝูงจำทางไหนไว้
+   */
+  antStep(mode: 'scent' | 'strongest'): Direction | null {
+    const state = (this as unknown as { here?: MazeState }).here
+    if (!state) return null
+
+    if (this.colony === undefined) this.colony = readColony(this.memory?.colony, state.grid)
+    if (this.antTrail.length === 0) this.antTrail.push({ ...state.position })
+
+    const direction =
+      mode === 'strongest'
+        ? strongestStep(this.colony, state.grid, state.position, state.visits)
+        : chooseStep(this.colony, state.grid, state.position, state.visits, Math.random)
+
+    if (direction) this.antTrail.push(this.ahead(state.position, direction))
+    return direction
+  }
+
+  /** มด: ทิ้งกลิ่นตามทางที่เดินมา (ตัดวงวนออกก่อน) แล้วให้กลิ่นเก่าระเหย — ใช้ตอนจบรอบ */
+  antLayScent(): void {
+    const state = (this as unknown as { here?: MazeState }).here
+    if (!state || this.antTrail.length === 0) return
+
+    const colony = layScent(this.colony ?? emptyColony(state.grid), state.grid, this.antTrail, Boolean(this.result?.ok))
+    this.colony = colony
+    const best = colony.bestCost === null ? '' : ` · ทางถูกสุด ${colony.bestCost}`
+    this.saveMemory({ ...this.memory, colony, label: `ปล่อยมดไปแล้ว ${colony.ants} ตัว ถึงทางออก ${colony.arrived} ตัว${best}` })
+  }
 
   visit(_row: number | Point, _col?: number): void {}
 

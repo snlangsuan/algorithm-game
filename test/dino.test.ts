@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { generate } from '~/game/blocks/codegen'
 import { normalize } from '~/game/blocks/pack'
 import { DINO_PACK } from '~/game/dino/blocks/pack'
-import { DinoAgent, viewOf, type DinoMemory } from '~/game/dino/agent'
+import { DINO_SPACE, DinoAgent, viewOf, type DinoMemory } from '~/game/dino/agent'
+import { readSwarm } from '~/game/line/swarm'
+import { DINO_SWARM_FOUND } from '~/data/algorithm-figures'
 import { TOPICS } from '~/data/algorithms'
 import { ART, BODY, DUCK_CLEAR, FLOCK, HOP_TOP, birdBox } from '~/game/dino/art'
 import {
@@ -366,4 +368,69 @@ test('GA — ฝึกแล้วไปได้ไกลขึ้น และ
   for (const number of ['5,197', '7,040']) {
     assert.ok(text.includes(number), `หน้า GA ไม่ได้พูดถึงเลข ${number} แล้ว`)
   }
+})
+
+// ---------- ฝูงนก (PSO) ----------
+
+/** ฝึกตัวอย่างใดก็ได้ที่จำข้ามรอบ — แบบเดียวกับ evolve() แต่เลือกตัวอย่างได้ */
+function trainPreset(presetId: string, trial: number, runs: number): { meters: number[]; memory: DinoMemory | null } {
+  let memory: DinoMemory | null = null
+  const meters: number[] = []
+
+  for (let round = 0; round < runs; round++) {
+    const agent = agentOf(presetId)
+    agent.memory = memory
+    agent.saveMemory = (data) => {
+      memory = data
+      agent.memory = data
+    }
+
+    const run = createRun({ courseId: 'classic', seed: trial * 1000 + round })
+    agent.onStart(viewOf(run, 500))
+
+    while (!run.over) {
+      order(run, (agent.step(viewOf(run, 500)) ?? 'run') as Action)
+      for (let step = 0; step < DECIDE_EVERY && !run.over; step++) advance(run)
+    }
+
+    agent.onFinish(viewOf(run, 500))
+    meters.push(metersOf(run.distance))
+  }
+
+  return { meters, memory }
+}
+
+test('หน้าฝูงนกหาจังหวะ — GA ออกตัวเร็วกว่า ฝูงนกแซงเมื่อฝึกนานขึ้น และตัวเลขยังตรง', () => {
+  const average = (list: number[]) => list.reduce((sum, value) => sum + value, 0) / list.length
+  const measure = (presetId: string, runs: number) => {
+    const firsts: number[] = []
+    const lasts: number[] = []
+    for (let trial = 1; trial <= 10; trial++) {
+      const { meters } = withSeededRandom(20260921 + trial, () => trainPreset(presetId, trial, runs))
+      firsts.push(average(meters.slice(0, 5)))
+      lasts.push(average(meters.slice(-5)))
+    }
+    return { first: Math.round(average(firsts)), last: Math.round(average(lasts)) }
+  }
+
+  const gaShort = measure('evolve', 30)
+  const swarmShort = measure('swarm', 30)
+  const gaLong = measure('evolve', 60)
+  const swarmLong = measure('swarm', 60)
+
+  assert.ok(gaShort.last > swarmShort.last, 'ฝึกสั้น GA ต้องนำ')
+  assert.ok(swarmLong.last > gaLong.last, 'ฝึกนาน ฝูงนกต้องแซง')
+
+  const text = TOPICS.find((topic) => topic.slug === 'swarm-timing')!.inGame
+  for (const value of [gaShort.first, gaShort.last, swarmShort.first, swarmShort.last, swarmLong.last, gaLong.last]) {
+    const shown = value.toLocaleString('en-US')
+    assert.ok(text.includes(shown), `หน้าฝูงนกหาจังหวะไม่ได้พูดถึง ${shown} แล้ว`)
+  }
+})
+
+test('ภาพของฝูงนกหาจังหวะ — จังหวะในภาพคือจังหวะที่ฝูงหาเจอจริง', () => {
+  const { memory } = withSeededRandom(20260922, () => trainPreset('swarm', 1, 60))
+  const swarm = readSwarm(memory?.swarm, DINO_SPACE)
+  assert.ok(swarm?.best)
+  assert.deepEqual(swarm.best.map((value) => Math.round(value * 100) / 100), [DINO_SWARM_FOUND.jump, DINO_SWARM_FOUND.duck])
 })

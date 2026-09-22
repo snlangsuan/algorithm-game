@@ -122,6 +122,18 @@ async function run() {
               @preset="game.blocks.usePreset"
             />
 
+            <MazeTrainingPanel
+              v-if="game.learns.value || game.training.running"
+              :training="game.training"
+              :memory="game.memory.value"
+              :learns="game.learns.value"
+              :optimal="game.optimalCost.value"
+              :disabled="game.busy.value"
+              @train="game.train"
+              @stop="game.stopTraining"
+              @clear="game.clearMemory"
+            />
+
             <MazeDrawTools v-model:tool="game.tool.value" :disabled="game.busy.value" />
           </template>
         </GamePanel>

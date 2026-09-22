@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { averageOffset, lapPercent, secondsOf, speedOf, type Run } from '~/game/line/engine'
-import type { LinePilot, LineResult, LineStatus } from '~/composables/useLineGame'
+import { averageOffset, goalWord, lapPercent, secondsOf, speedOf, type Run } from '~/game/line/engine'
+import type { LineResult, LineStatus } from '~/composables/useLineGame'
 
 const props = defineProps<{
   run: Run
@@ -8,7 +8,6 @@ const props = defineProps<{
   result: LineResult | null
   /** เวลาที่โปรแกรมใช้คิดสะสมในรอบนี้ */
   ms: number
-  pilot: LinePilot
   /** เวลาที่ดีที่สุดของสนามนี้ในเซสชันนี้ */
   best: number | null
 }>()
@@ -27,7 +26,7 @@ const label = computed(() => {
   if (props.status === 'error') return { text: 'โปรแกรมมีปัญหา', tone: 'bg-amber-50 text-amber-800' }
 
   const outcome = props.result?.outcome
-  if (outcome === 'finished') return { text: 'ครบรอบ', tone: 'bg-emerald-50 text-emerald-700' }
+  if (outcome === 'finished') return { text: goalWord(props.run.course), tone: 'bg-emerald-50 text-emerald-700' }
   if (outcome === 'lost') return { text: 'หลุดเส้น', tone: 'bg-rose-50 text-rose-700' }
   if (outcome === 'timeout') return { text: 'หมดเวลา', tone: 'bg-rose-50 text-rose-700' }
 
@@ -98,18 +97,13 @@ const label = computed(() => {
 
       <div class="rounded-lg bg-surface px-2.5 py-2">
         <p class="flex items-center justify-between gap-1 text-[10px] text-ink-subtle">
-          {{ pilot === 'agent' ? 'เวลาที่บอทใช้คิด' : 'ห่างเส้นมากสุด' }}
-          <UiInfo v-if="pilot === 'agent'" label="เวลาคิดนี้นับยังไง">
+          เวลาที่บอทใช้คิด
+          <UiInfo label="เวลาคิดนี้นับยังไง">
             โค้ดของบอทรันคนละเธรดกับหน้าจอ คิดนานแค่ไหนภาพก็ไม่สะดุด
           </UiInfo>
         </p>
         <p class="font-mono text-lg font-semibold tabular-nums text-ink">
-          <template v-if="pilot === 'agent'">
-            {{ (result ? result.ms : ms).toLocaleString() }}<span class="text-xs"> ms</span>
-          </template>
-          <template v-else>
-            {{ run.samples > 0 ? run.offsetMax.toFixed(0) : DASH }}<span v-if="run.samples > 0" class="text-xs"> px</span>
-          </template>
+          {{ (result ? result.ms : ms).toLocaleString() }}<span class="text-xs"> ms</span>
         </p>
       </div>
     </div>

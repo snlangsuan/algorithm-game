@@ -3,6 +3,7 @@ import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { VARIABLES } from '~/game/blocks/core'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { OTHELLO_EXPLAIN } from './explain'
 
 const SPOTS: SelectOption[] = [
   { value: 'any', label: 'ตาไหนก็ได้' },
@@ -53,7 +54,64 @@ const HAT_END: BlockSpec = {
   emit: () => {}
 }
 
+const WEIGHT_SOURCES: SelectOption[] = [
+  { value: 'bird', label: 'นกตัวนี้' },
+  { value: 'best', label: 'ตัวที่ดีที่สุดของฝูง' }
+]
+
+/** บล็อกของฝูงนก (PSO) — ฝูงถูกจำไว้ข้ามเกมเอง ใช้คู่กับหัวบล็อกเริ่มเกมกับจบเกม */
+const SWARM_BLOCKS: BlockSpec[] = [
+  {
+    kind: 'othello.swarm-fly',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: บินหนึ่งก้าว',
+    hint: 'นกตัวถัดไปในฝูงบินไปลองน้ำหนักชุดใหม่ — ถูกดึงเข้าหาน้ำหนักที่ดีที่สุดของตัวเองกับของทั้งฝูง ใช้ในหัวบล็อกเริ่มเกม',
+    parts: [{ type: 'text', text: 'ฝูงนก: นกตัวถัดไปบินหนึ่งก้าว' }],
+    emit: (node, ctx) => ctx.line(node, 'this.swarmFly()')
+  },
+  {
+    kind: 'othello.bird-weights',
+    shape: 'statement',
+    category: 'data',
+    title: 'ใส่น้ำหนักของฝูงนกลงในลิสต์',
+    hint: 'นกหนึ่งตัวคือน้ำหนัก 10 กลุ่ม (ช่องที่หมุนหรือสะท้อนกระดานแล้วตรงกันใช้น้ำหนักเดียวกัน) — บล็อกนี้ขยายเป็น 64 ช่องแล้วใส่ลงลิสต์ ใช้คู่กับ "ลงหมากที่ดีที่สุดตามน้ำหนักในลิสต์" · "นกตัวนี้" ใช้ตอนฝึก · "ดีที่สุดของฝูง" ใช้เมื่อฝึกพอแล้ว อยากให้บอทเล่นเต็มฝีมือ',
+    parts: [
+      { type: 'text', text: 'ใส่น้ำหนักของ' },
+      { type: 'field', name: 'from', options: WEIGHT_SOURCES },
+      { type: 'text', text: 'ลงในลิสต์' },
+      { type: 'field', name: 'name', options: VARIABLES }
+    ],
+    emit: (node, ctx) =>
+      ctx.line(
+        node,
+        `this.vars.${ctx.field(node, 'name')} = this.${ctx.field(node, 'from') === 'best' ? 'swarmBestWeights' : 'birdWeights'}()`
+      )
+  },
+  {
+    kind: 'othello.swarm-score',
+    shape: 'statement',
+    category: 'data',
+    title: 'ฝูงนก: ให้คะแนน',
+    hint: 'ให้คะแนนนกตัวที่เพิ่งลอง — ยิ่งมากยิ่งดี ถ้าดีกว่าที่มันหรือทั้งฝูงเคยได้ น้ำหนักชุดนี้จะถูกจำไว้ ใช้ในหัวบล็อกจบเกม',
+    parts: [
+      { type: 'text', text: 'ฝูงนก: ให้คะแนนนกตัวนี้' },
+      { type: 'input', name: 'value', placeholder: 'คะแนน', accepts: 'number' }
+    ],
+    emit: (node, ctx) => ctx.line(node, `this.swarmScore(${ctx.value(node, 'value', '0')})`)
+  }
+]
+
 const BLOCKS: BlockSpec[] = [
+  {
+    kind: 'othello.ruthless',
+    shape: 'statement',
+    category: 'action',
+    title: 'ลงหมากโหมดโหด',
+    hint: 'เอนจินเต็มกำลัง: มองล่วงหน้าลึกที่สุดเท่าที่เวลาให้ แล้วแก้ท้ายเกมจนจบจริง — ใช้เวลาคิดเต็มโควตาทุกตา',
+    parts: [{ type: 'text', text: 'ลงหมากโหมดโหด' }],
+    emit: (node, ctx) => ctx.line(node, 'return this.ruthless(this.here)')
+  },
   {
     kind: 'othello.place',
     shape: 'statement',
@@ -701,6 +759,24 @@ const compare = (left: BlockNode, op: string, right: BlockNode) =>
 const STATEMENT_PARSERS: Matcher[] = [
   (node, ctx) => {
     const back = ctx.returned(node)
+    return back && ctx.call(back, 'ruthless') ? ctx.make('othello.ruthless') : null
+  },
+  (node, ctx) => (node.type === 'ExpressionStatement' && ctx.call(node.expression, 'swarmFly') ? ctx.make('othello.swarm-fly') : null),
+  (node, ctx) => {
+    if (node.type !== 'ExpressionStatement') return null
+    const args = ctx.call(node.expression, 'swarmScore')
+    return args && args.length === 1 ? ctx.make('othello.swarm-score', {}, { value: ctx.value(args[0]!) }) : null
+  },
+  (node, ctx) => {
+    const expression = node.type === 'ExpressionStatement' ? node.expression : null
+    if (expression?.type !== 'AssignmentExpression') return null
+    const from = ctx.call(expression.right, 'birdWeights') ? 'bird' : ctx.call(expression.right, 'swarmBestWeights') ? 'best' : null
+    const left = expression.left
+    const name = left?.type === 'MemberExpression' && ctx.thisProp(left.object, 'vars') ? left.property?.name : null
+    return from && name && VARIABLES.some((item) => item.value === name) ? ctx.make('othello.bird-weights', { from, name }) : null
+  },
+  (node, ctx) => {
+    const back = ctx.returned(node)
     if (!back) return null
 
     if (ctx.call(back, 'savedMove')) return ctx.make('othello.play-kept')
@@ -815,7 +891,8 @@ function unwrap(statements: Node[], ctx: ParseContext): Node[] {
 
 export const OTHELLO_PACK = createPack({
   id: 'othello',
-  blocks: BLOCKS,
+  blocks: [...BLOCKS, ...SWARM_BLOCKS],
+  explain: OTHELLO_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'OthelloAgent',
@@ -1205,6 +1282,30 @@ export const OTHELLO_PACK = createPack({
       name: 'สุ่ม',
       description: 'เลือกตาแบบสุ่ม ใช้เป็นคู่ซ้อมเบา ๆ',
       build: (): BlockProgram => ({ name: 'สุ่ม', scripts: { 'othello.on-turn': [place('any', 'random')] } })
+    },
+    {
+      id: 'swarm',
+      name: 'ฝูงนกหาน้ำหนัก (PSO)',
+      description:
+        'โจทย์เดียวกับวิวัฒนาการ (GA) แต่ใช้ฝูงนกหกตัวหาแทน และหาแค่ 10 น้ำหนัก เพราะช่องที่หมุนหรือสะท้อนกระดานแล้วตรงกัน เช่นมุมทั้งสี่ ควรมีน้ำหนักเท่ากัน — ทุกเกมนกตัวถัดไปบินหนึ่งก้าว เล่นด้วยน้ำหนักของมัน แล้วรับคะแนนเป็นจำนวนหมากตอนจบเกม',
+      build: (): BlockProgram => ({
+        name: 'ฝูงนกหาน้ำหนัก (PSO)',
+        scripts: {
+          'othello.on-start': [block('othello.swarm-fly'), block('othello.bird-weights', { from: 'bird', name: 'a' })],
+          'othello.on-turn': [block('othello.by-weights', { name: 'a' })],
+          'othello.on-end': [block('othello.swarm-score', {}, { value: block('othello.score', { who: 'me' }) })]
+        }
+      })
+    },
+    {
+      id: 'ruthless',
+      name: 'โหมดโหด',
+      description:
+        'เอนจินเต็มกำลังที่รวมหลายวิธีไว้ในตัวเดียว: มองล่วงหน้าแบบตัดกิ่ง (alpha-beta) ลึกขึ้นทีละชั้นจนหมดเวลา จำกระดานที่เคยคิดแล้ว ประเมินกระดานจากความคล่องตัว มุม และขอบที่พลิกไม่ได้ แล้วพอเหลือช่องว่างไม่เกิน 14 ช่องก็แก้จนจบเกมจริง — ลองเอาชนะดูสิ',
+      build: (): BlockProgram => ({
+        name: 'โหมดโหด',
+        scripts: { 'othello.on-turn': [block('othello.ruthless')] }
+      })
     }
   ]
 })

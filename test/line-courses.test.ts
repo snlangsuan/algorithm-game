@@ -18,7 +18,7 @@ const square = (overrides: Partial<Parameters<typeof customCourse>[0]> = {}): Co
       { x: 300, y: 150 },
       { x: 200, y: 300 }
     ],
-    paint: ['black', 'black', 'red', 'black', 'gap', 'black'],
+    paint: ['black', 'black', 'black', 'black', 'gap', 'black'],
     ...overrides
   })
 
@@ -43,7 +43,7 @@ test('สนามที่วาดดี ๆ ผ่าน และสนา�
 test('สีของแต่ละท่อนตามไปถึงเส้นที่เอนจินใช้จริง — เส้นขาดไม่มีในตารางค้นหา', () => {
   const track = buildTrack(square())
   const paints = new Set(paintRuns(track).map((run) => run.paint))
-  assert.deepEqual([...paints].sort(), ['black', 'gap', 'red'])
+  assert.deepEqual([...paints].sort(), ['black', 'gap'])
 
   const visible = new Set([...track.grid.values()].flat())
   for (const [index, paint] of track.paint.entries()) {
@@ -89,4 +89,13 @@ test('ของเสียที่อ่านจากเครื่อง�
 
   assert.deepEqual(read.map((item) => item.id), ['custom-test'], 'เหลือแค่ตัวที่ดี และไม่ซ้ำ')
   assert.deepEqual(parseCourses('ไม่ใช่ JSON ของเรา'), [])
+})
+
+test('สนามที่วาดไว้ตอนยังมีโซนแดง ยังเปิดได้ — ท่อนแดงกลายเป็นเส้นดำ', () => {
+  const saved = JSON.parse(serializeCourses([square()]))
+  saved.courses[0].paint[2] = 'red'
+
+  const [read] = parseCourses(saved)
+  assert.ok(read, 'สนามเก่าต้องไม่หายไปเฉย ๆ')
+  assert.equal(read.paint![2], 'black')
 })

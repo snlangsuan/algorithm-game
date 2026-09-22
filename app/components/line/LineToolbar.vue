@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { SPEEDS } from '~/game/line/pace'
-import type { LinePilot, LineStatus } from '~/composables/useLineGame'
+import type { LineStatus } from '~/composables/useLineGame'
 
-defineProps<{ status: LineStatus; starting: boolean; pilot: LinePilot }>()
+defineProps<{ status: LineStatus; starting: boolean }>()
 
 const speed = defineModel<number>('speed', { required: true })
 
@@ -32,13 +32,7 @@ const emit = defineEmits<{ start: []; pause: []; resume: []; stop: [] }>()
       </UiButton>
     </div>
 
-    <p class="hidden text-[11px] leading-tight text-ink-subtle sm:block">
-      {{
-        pilot === 'player'
-          ? 'ลูกศรขึ้น = วิ่ง · ซ้าย/ขวา = เลี้ยว (กดค้าง)'
-          : 'บอทคิดเอง 30 ครั้งต่อวินาที'
-      }}
-    </p>
+    <p class="hidden text-[11px] leading-tight text-ink-subtle sm:block">บอทคิดเอง 30 ครั้งต่อวินาที</p>
 
     <UiInfo label="กติกาของสนามนี้" align="left">
       วิ่งให้ครบหนึ่งรอบเร็วที่สุด โดยตัวหุ่นห่างจากเส้นไม่เกิน 60 พิกเซล — เกินนั้นถือว่าหลุดเส้น ·

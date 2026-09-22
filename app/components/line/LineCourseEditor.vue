@@ -34,12 +34,11 @@ type Tool = 'point' | Paint | 'erase'
 const TOOLS: Array<{ value: Tool; label: string; hint: string }> = [
   { value: 'point', label: 'วาง/ลากจุด', hint: 'คลิกที่ว่างเพื่อต่อจุดใหม่ท้ายเส้น · คลิกบนเส้นเพื่อแทรกจุด · ลากจุดเพื่อย้าย' },
   { value: 'black', label: PAINT_LABEL.black, hint: 'คลิกท่อนเส้นเพื่อเปลี่ยนเป็นเส้นดำปกติ' },
-  { value: 'red', label: PAINT_LABEL.red, hint: 'คลิกท่อนเส้นเพื่อทำเป็นโซนแดง — ในโซนแดงห้ามวิ่งเร็วเกิน 120 px/วิ' },
   { value: 'gap', label: PAINT_LABEL.gap, hint: 'คลิกท่อนเส้นเพื่อลบเส้นช่วงนั้นออก เซนเซอร์จะมองไม่เห็นอะไรเลย' },
   { value: 'erase', label: 'ลบจุด', hint: 'คลิกที่จุดเพื่อลบทิ้ง (ใช้เครื่องมืออื่นอยู่ก็คลิกขวาที่จุดเพื่อลบได้)' }
 ]
 
-const STROKE: Record<Paint, string> = { black: '#1c1524', red: '#e11d48', gap: '#b9b0a0' }
+const STROKE: Record<Paint, string> = { black: '#1c1524', gap: '#b9b0a0' }
 
 const SNAP = 10
 
@@ -227,7 +226,7 @@ const toolHint = computed(() => TOOLS.find((item) => item.value === tool.value)?
             @click="tool = item.value"
           >
             <span
-              v-if="item.value === 'black' || item.value === 'red' || item.value === 'gap'"
+              v-if="item.value === 'black' || item.value === 'gap'"
               class="inline-block h-1.5 w-4 rounded-full"
               :style="{
                 background: item.value === 'gap' ? 'transparent' : STROKE[item.value],

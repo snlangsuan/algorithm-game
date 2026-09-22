@@ -29,7 +29,18 @@ const emit = defineEmits<{
   remove: []
 }>()
 
-provide(BLOCK_EDITOR, props.api)
+/**
+ * ส่งต่อไปที่ api ตัวปัจจุบันทุกครั้ง — provide ทำครั้งเดียวตอนสร้าง แต่หน้าที่มีสองฝ่าย (ไล่จับ)
+ * สลับ api ได้โดยไม่สร้างตัวแก้ใหม่ ถ้าส่ง props.api ตรง ๆ บล็อกของฝ่ายที่สลับมาจะแก้ไม่ติดเลย
+ */
+provide(BLOCK_EDITOR, {
+  dropStatement: (target) => props.api.dropStatement(target),
+  dropInput: (target) => props.api.dropInput(target),
+  remove: (id) => props.api.remove(id),
+  duplicate: (id) => props.api.duplicate(id),
+  setField: (node, name, value) => props.api.setField(node, name, value),
+  unpack: (id) => props.api.unpack(id)
+})
 
 const { dragging } = useBlockDrag()
 

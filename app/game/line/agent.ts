@@ -8,10 +8,12 @@ import {
   lapPercent,
   linePosition,
   type Paint,
+  type Side,
   speedOf,
   type Drive,
   type Run
 } from './engine'
+import { DIMENSIONS, fly, readSwarm, score, valueOf, type Dimension } from './swarm'
 
 /**
  * ทุกอย่างที่หุ่นรู้ ณ ตอนที่ถูกถาม
@@ -35,8 +37,17 @@ export interface LineState {
   /** ไม่มีเซนเซอร์ตัวไหนเห็นเส้นเลย */
   lost: boolean
 
-  /** สีของเส้นที่เซนเซอร์แต่ละตัวเห็น ('black' / 'red') — ไม่เห็นเส้นเป็น null */
+  /** รอบนี้จบแบบสำเร็จแล้ว (ครบรอบ หรือถึงเส้นชัย) — มีความหมายตอนจบรอบ */
+  finished: boolean
+
+  /** สีของเส้นที่เซนเซอร์แต่ละตัวเห็น — ไม่เห็นเส้นเป็น null */
   colors: Array<Paint | null>
+
+  /** เซนเซอร์แต่ละตัวอยู่บนป้ายเขียวข้างเส้นไหม — ป้ายบอกทางที่ทางแยก เรียงจากซ้ายสุดไปขวาสุด */
+  greens: boolean[]
+
+  /** เซนเซอร์แต่ละตัวอยู่บนเครื่องหมายโค้งข้างซ้ายของเส้นไหม — เครื่องหมายวางตรงจุดที่เข้าหรือออกโค้ง */
+  corners: boolean[]
 
   /** ตัวหุ่นวิ่งเร็วกี่พิกเซลต่อวินาทีตอนนี้ — มอเตอร์ค่อย ๆ ไล่ตามคำสั่ง ไม่ได้เท่าที่สั่งทันที */
   speed: number
@@ -64,8 +75,29 @@ export interface LineState {
 /** สิ่งที่ step() ตอบกลับมาได้ — ไม่ตอบอะไรเลยถือว่าใช้กำลังมอเตอร์เดิมต่อ */
 export type DriveResult = Drive | null
 
+/** ของที่จำไว้ข้ามรอบ — เก็บลงเครื่องเป็น JSON รอบหน้าเปิดมาก็ยังอยู่ */
+export interface LineMemory {
+  label?: string
+  [key: string]: unknown
+}
+
 export class LineAgent {
   name = 'Agent'
+
+  /** ความจำที่เก็บไว้จากรอบก่อน ๆ — ยังไม่เคยจำอะไรเลยก็เป็น null */
+  memory: LineMemory | null = null
+
+  /** ค่าของนกที่ลองอยู่รอบนี้ — ยังไม่ได้สั่งให้ฝูงบินก็เป็น null */
+  private bird: number[] | null = null
+
+  /** เรียกครั้งเดียวก่อนออกวิ่ง */
+  onStart(_state: LineState): void {}
+
+  /** เรียกครั้งเดียวตอนรอบจบ ไม่ว่าจะครบรอบ หลุดเส้น หรือหมดเวลา */
+  onFinish(_state: LineState): void {}
+
+  /** บันทึกความจำลงเครื่อง — ตัวรันเป็นคนเขียนทับเมธอดนี้ */
+  saveMemory(_data: LineMemory): void {}
 
   /** เรียกทุกครั้งที่ถึงเวลาตัดสินใจ */
   step(_state: LineState): DriveResult {
@@ -92,9 +124,47 @@ export class LineAgent {
     return this.sensor(index) >= SEE_THRESHOLD
   }
 
-  /** มีเซนเซอร์ตัวไหนเห็นเส้นสีนี้อยู่บ้าง — 'red' คือโซนจำกัดความเร็ว */
-  seesColor(color: Paint): boolean {
-    return this.here.colors.includes(color)
+  /**
+   * เห็นป้ายเขียวทางฝั่งนั้นไหม ('left' / 'right') — ดูแค่เซนเซอร์สองตัวของฝั่งนั้น
+   * ป้ายอยู่ก่อนถึงทางแยก พอถึงทางแยกจริงก็เลยป้ายไปแล้ว ต้องจำไว้เอง
+   */
+  seesMarker(side: Side): boolean {
+    const [outer, inner] = side === 'left' ? [0, 1] : [4, 3]
+    return Boolean(this.here.greens[outer!] || this.here.greens[inner!])
+  }
+
+  /** เห็นเครื่องหมายโค้งข้างซ้ายไหม — ดูเซนเซอร์ซ้ายสุดกับซ้าย */
+  seesCorner(): boolean {
+    return Boolean(this.here.corners[0] || this.here.corners[1])
+  }
+
+  /** ฝูงนก: นกตัวถัดไปบินหนึ่งก้าวไปยังค่าชุดใหม่ แล้วจำฝูงไว้ข้ามรอบ */
+  swarmFly(): void {
+    const swarm = fly(readSwarm(this.memory?.swarm), Math.random)
+    this.bird = swarm.birds[swarm.current]!.at
+    this.saveMemory({ ...this.memory, swarm, label: `ฝูงนกบินไปแล้ว ${swarm.turn} ก้าว` })
+  }
+
+  /** ฝูงนก: ค่าที่นกตัวนี้เลือก — ยังไม่ได้สั่งบินก็ได้ค่ากลางของช่วง */
+  birdValue(dimension: Dimension): number {
+    if (this.bird) return valueOf(this.bird, dimension)
+    const range = DIMENSIONS.find((item) => item.key === dimension)
+    return range ? (range.min + range.max) / 2 : 0
+  }
+
+  /** ฝูงนก: ค่าที่ดีที่สุดที่ทั้งฝูงเคยเจอ — ยังไม่มีก็ได้ค่าของนกตัวนี้ */
+  swarmBest(dimension: Dimension): number {
+    const swarm = readSwarm(this.memory?.swarm)
+    return swarm?.best ? valueOf(swarm.best, dimension) : this.birdValue(dimension)
+  }
+
+  /** ฝูงนก: ให้คะแนนนกตัวนี้ — ยิ่งน้อยยิ่งดี ดีกว่าที่เคยก็จำไว้ */
+  swarmScore(value: number): void {
+    const swarm = readSwarm(this.memory?.swarm)
+    if (!swarm) return
+    const next = score(swarm, Number(value))
+    const best = next.bestScore === null ? '' : ` · ดีที่สุด ${next.bestScore.toFixed(2)}`
+    this.saveMemory({ ...this.memory, swarm: next, label: `ฝูงนกบินไปแล้ว ${next.turn} ก้าว${best}` })
   }
 
   /** ตั้งกำลังมอเตอร์ซ้ายกับขวาตรง ๆ (−100 ถึง 100) */
@@ -130,7 +200,10 @@ export function viewOf(run: Run, timeBudget: number): LineState {
     seen: sensors.map((value) => value >= SEE_THRESHOLD),
     position: linePosition(sensors, run.lastSide),
     lost: isLost(sensors),
+    finished: run.over === 'finished',
     colors: [...run.colors],
+    greens: [...run.greens],
+    corners: [...run.corners],
     speed: Math.round(speedOf(run)),
     topSpeed: MAX_WHEEL,
     left: run.drive.left,

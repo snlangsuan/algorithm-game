@@ -5,6 +5,7 @@ import {
   CATEGORY_ORDER,
   register,
   type BlockCategory,
+  type BlockExplain,
   type BlockNode,
   type BlockSpec,
   type PaletteGroup
@@ -72,11 +73,33 @@ export interface BlockPack {
   parsers?: PackParsers
 }
 
-export type PackInput = Omit<BlockPack, 'hats' | 'palette'>
+export type PackInput = Omit<BlockPack, 'hats' | 'palette'> & {
+  /** คำอธิบายเต็มของบล็อกแต่ละตัว แยกไฟล์ไว้เพราะยาว — createPack เอาไปติดกับ spec ให้ */
+  explain?: Record<string, BlockExplain>
+}
 
-export function createPack(input: PackInput): BlockPack {
+/** โค้ดที่บล็อกของแต่ละชุดเรียกใช้ — ปุ่ม "ดูโค้ดจริง" มาหาที่นี่ */
+const TARGETS = new Map<string, CodeTarget>()
+
+export const targetOf = (packId: string | undefined): CodeTarget | undefined =>
+  packId ? TARGETS.get(packId) : undefined
+
+export function createPack({ explain = {}, ...input }: PackInput): BlockPack {
   const hats = input.target.methods.map((method) => method.hat)
   const blocks = [...input.blocks, ...coreBlocksOf(input.target.memory === true)]
+
+  for (const kind of Object.keys(explain)) {
+    if (!input.blocks.some((block) => block.kind === kind)) {
+      throw new Error(`คำอธิบายของ "${kind}" ไม่ตรงกับบล็อกไหนในชุด ${input.id}`)
+    }
+  }
+
+  // บล็อกกลาง (ถ้า/ทำซ้ำ/ตัวแปร) ใช้ร่วมทุกชุด จึงติดป้ายชุดให้แค่บล็อกของชุดนี้เอง
+  for (const spec of [...hats, ...input.blocks]) {
+    spec.pack = input.id
+    if (explain[spec.kind]) spec.explain = explain[spec.kind]
+  }
+  TARGETS.set(input.id, input.target)
 
   register([...hats, ...input.blocks])
 

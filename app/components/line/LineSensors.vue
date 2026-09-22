@@ -11,7 +11,15 @@ const props = defineProps<{ run: Run; watched: number[] }>()
 const bars = computed(() =>
   SENSOR_LABEL.map((label, index) => {
     const value = props.run.sensors[index] ?? 0
-    return { label, index, value, seen: value >= SEE_THRESHOLD, watched: props.watched.includes(index) }
+    return {
+      label,
+      index,
+      value,
+      seen: value >= SEE_THRESHOLD,
+      green: Boolean(props.run.greens[index]),
+      corner: Boolean(props.run.corners[index]),
+      watched: props.watched.includes(index)
+    }
   })
 )
 
@@ -35,13 +43,19 @@ const motors = computed(() => [
         เซนเซอร์ห้าตัว
         <UiInfo label="เซนเซอร์อ่านค่ายังไง" align="left">
           0 คือพื้นขาว 100 คือเส้นดำเต็ม ๆ ตั้งแต่ 50 ขึ้นไปถือว่าเห็นเส้น (แท่งสีแดง) ·
-          วงสีม่วงบนตัวหุ่นคือเซนเซอร์ที่โปรแกรมเพิ่งเปิดดู
+          วงสีม่วงบนตัวหุ่นคือเซนเซอร์ที่โปรแกรมเพิ่งเปิดดู · ตัวเลขพื้นเขียวคือเซนเซอร์ที่อยู่บนป้ายเขียวข้างเส้น พื้นเทาคืออยู่บนเครื่องหมายโค้ง
         </UiInfo>
       </p>
 
       <div class="mt-2 flex h-16 gap-1.5">
         <div v-for="bar in bars" :key="bar.index" class="flex flex-1 flex-col items-center gap-1">
-          <span class="font-mono text-[10px] tabular-nums text-ink-muted">{{ bar.value }}</span>
+          <span
+            class="rounded px-1 font-mono text-[10px] tabular-nums"
+            :class="bar.green ? 'bg-green-600 text-white' : bar.corner ? 'bg-slate-500 text-white' : 'text-ink-muted'"
+            :title="bar.green ? 'อยู่บนป้ายเขียว' : bar.corner ? 'อยู่บนเครื่องหมายโค้ง' : undefined"
+          >
+            {{ bar.value }}
+          </span>
           <div
             class="relative w-full flex-1 overflow-hidden rounded bg-surface-sunken"
             :class="bar.watched ? 'ring-2 ring-primary-300' : ''"

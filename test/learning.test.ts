@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 
 import { generate } from '~/game/blocks/codegen'
 import { normalize } from '~/game/blocks/pack'
-import { OthelloAgent, AGENT_GLOBALS, type AgentMemory } from '~/game/othello/agent'
+import { OthelloAgent, AGENT_GLOBALS, OTHELLO_SPACE, SYMMETRY_CLASS, expandWeights, type AgentMemory } from '~/game/othello/agent'
+import { readSwarm } from '~/game/line/swarm'
+import { TOPICS } from '~/data/algorithms'
 import {
   BLACK,
   WHITE,
@@ -249,4 +251,81 @@ test('บาร์คะแนนที่ค้างอยู่สูง ต�
   } finally {
     Math.random = realRandom
   }
+})
+
+// ---------- ฝูงนก (PSO) ----------
+
+test('หน้าฝูงนกหาน้ำหนักกระดาน — ระหว่างฝึกแพ้ GA แต่ตัวที่ดีที่สุดเจอเร็วกว่า และตัวเลขยังตรง', { timeout: 180_000 }, () => {
+  const realRandom = Math.random
+
+  /** อัตราชนะระหว่างฝึก — วิธีเดียวกับเทสต์ GA ข้างบน */
+  const during = (presetId: string) => {
+    Math.random = seededRandom(SEED)
+    let first = 0
+    let last = 0
+    for (let round = 0; round < ROUNDS; round++) {
+      const me = build(presetId)
+      const rival = build('corner')
+      const results: Array<Player | null> = []
+      for (let game = 0; game < GAMES; game++) results.push(play(me, rival))
+      const rate = (from: number, to: number) =>
+        (results.slice(from, to).filter((winner) => winner === BLACK).length / (to - from)) * 100
+      first += rate(0, WINDOW)
+      last += rate(GAMES - WINDOW, GAMES)
+    }
+    return { first: (first / ROUNDS).toFixed(1), last: (last / ROUNDS).toFixed(1) }
+  }
+
+  /** ฝึก 40 เกม แล้วเอาตัวที่ดีที่สุดที่หาเจอ (ไม่สำรวจแล้ว) ไปเล่นหนึ่งเกม ลอง 40 ครั้ง */
+  const champion = (presetId: string) => {
+    let wins = 0
+    for (let seed = 1000; seed < 1040; seed++) {
+      Math.random = seededRandom(seed)
+      const me = build(presetId)
+      for (let game = 0; game < 40; game++) play(me, build('corner'))
+
+      const judge = build(presetId)
+      judge.memory = me.memory
+      judge.saveMemory = () => {}
+      const weights =
+        presetId === 'swarm'
+          ? expandWeights(readSwarm((me.memory as { swarm?: unknown } | null)?.swarm, OTHELLO_SPACE)!.best!)
+          : ((me.memory as { a?: number[] } | null)?.a ?? [])
+      judge.onGameStart = function (this: OthelloAgent & { vars: Record<string, unknown> }) {
+        this.vars.a = weights
+      }
+      if (play(judge, build('corner')) === BLACK) wins++
+    }
+    return String(Math.round((wins / 40) * 100))
+  }
+
+  try {
+    const ga = during('evolve')
+    const swarm = during('swarm')
+    const gaBest = champion('evolve')
+    const swarmBest = champion('swarm')
+
+    assert.ok(Number(swarm.last) < Number(ga.last), 'ระหว่างฝึก ฝูงนกต้องชนะน้อยกว่า GA')
+    assert.ok(Number(swarmBest) > Number(gaBest), 'ตัวที่ดีที่สุดของฝูงต้องชนะบ่อยกว่าแชมป์ GA หลังฝึก 40 เกม')
+
+    const text = TOPICS.find((topic) => topic.slug === 'swarm-weights')!.inGame
+    for (const value of [`${swarm.first}%`, `${swarm.last}%`, `${ga.first}%`, `${ga.last}%`, `${swarmBest}%`, `${gaBest}%`]) {
+      assert.ok(text.includes(value), `หน้าฝูงนกหาน้ำหนักไม่ได้พูดถึง ${value} แล้ว`)
+    }
+  } finally {
+    Math.random = realRandom
+  }
+})
+
+test('น้ำหนัก 10 กลุ่มครอบคลุมกระดาน และสมมาตรทั้งหมุนและสะท้อน', () => {
+  assert.equal(new Set(SYMMETRY_CLASS).size, 10)
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const group = SYMMETRY_CLASS[row * 8 + col]
+      assert.equal(SYMMETRY_CLASS[row * 8 + (7 - col)], group, 'สะท้อนซ้ายขวา')
+      assert.equal(SYMMETRY_CLASS[(7 - row) * 8 + col], group, 'สะท้อนบนล่าง')
+      assert.equal(SYMMETRY_CLASS[col * 8 + row], group, 'สะท้อนตามแนวทแยง')
+    }
+  }
+  assert.equal(SYMMETRY_CLASS[0], 0, 'มุมต้องเป็นกลุ่มแรก')
 })

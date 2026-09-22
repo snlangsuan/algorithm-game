@@ -60,7 +60,21 @@ import {
 import { viewOf as runnerView } from '~/game/dino/agent'
 import { DUCK_CLEAR } from '~/game/dino/art'
 import { SEE_THRESHOLD, averageOffset, secondsOf, type Run as LineRun } from '~/game/line/engine'
-import { playRule } from '~/game/line/rules'
+import { pdWith, playRule, playWith } from '~/game/line/rules'
+import { followScent, pathCost, trainColony } from '~/game/maze/ants'
+import { fly as flySwarm, score as scoreSwarm } from '~/game/line/swarm'
+import { OTHELLO_SPACE, expandWeights } from '~/game/othello/agent'
+
+/**
+ * ค่าที่ตัวอย่างฝูงนก (PSO) หาเจอบนสนามมุมหักศอก หลังฝึก 100 รอบ ด้วยเมล็ดสุ่มแรกของเทสต์
+ * ตัวอย่างนั้นสุ่มเอง ภาพจึงวิ่งด้วยค่าที่มันหาเจอแทน — เทสต์ฝึกซ้ำแล้วตรวจว่ายังได้ค่านี้
+ */
+export const SWARM_FOUND = { power: 100, kp: 0.37, kd: 4.74 }
+
+/**
+ * จังหวะที่ตัวอย่างฝูงนกของเกมวิ่งหลบหาเจอ หลังฝึก 60 รอบ ด้วยเมล็ดสุ่มของเทสต์ — เทสต์ฝึกซ้ำแล้วตรวจว่ายังได้ค่านี้
+ */
+export const DINO_SWARM_FOUND = { jump: 0.11, duck: 0.05 }
 import {
   BLACK,
   BOARD_SIZE,
@@ -409,6 +423,45 @@ interface Match {
   white: number
 }
 
+/** ลงหมากแบบเดียวกับบล็อก "ลงหมากที่ดีที่สุดตามน้ำหนักในลิสต์" — ให้คะแนนทั้งกระดานหลังลง */
+const byBoardWeights =
+  (weights: number[]): Policy =>
+  (board, moves, me) => {
+    let best = moves[0]!
+    let bestScore = -Infinity
+
+    for (const move of moves) {
+      const next = applyMove(board, move, me)
+      let score = 0
+      for (let row = 0; row < BOARD_SIZE; row++) {
+        for (let col = 0; col < BOARD_SIZE; col++) {
+          const cell = next[row]![col]
+          if (cell === BLACK || cell === WHITE) score += (cell === me ? 1 : -1) * weights[row * BOARD_SIZE + col]!
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score
+        best = move
+      }
+    }
+
+    return best
+  }
+
+/** ฝึกฝูงนกของโอเทลโลแบบไม่ผ่าน worker ด้วยตัวสุ่มแบบกำหนดเมล็ด — ภาพต้องเหมือนเดิมทุกครั้ง */
+function othelloSwarm(games: number, seed: number) {
+  const random = createRng(seed)
+  let swarm: ReturnType<typeof flySwarm> | null = null
+
+  for (let game = 0; game < games; game++) {
+    swarm = flySwarm(swarm, random, OTHELLO_SPACE)
+    const played = playMatch(byBoardWeights(expandWeights(swarm.birds[swarm.current]!.at)), corner)
+    swarm = scoreSwarm(swarm, -played.black)
+  }
+
+  return swarm!
+}
+
 export function playMatch(black: Policy, white: Policy, stopAfter = Infinity): Match {
   let board = createBoard()
   let turn: Player = BLACK
@@ -648,12 +701,61 @@ function pursuitAim(match: ChaseMatch, hunter: Hunter): Point {
  * ปล่อยให้ AI ทั้งสองฝ่ายเดินสู้กันตามจำนวนจังหวะที่กำหนด
  * ไม่มีการสุ่มเลย ภาพจึงเหมือนเดิมทุกครั้งที่เปิดหน้า
  */
+/**
+ * กฎฝูงปลาแบบเดียวกับ flockTo ในบล็อก "ว่ายแบบฝูงปลา" เขียนซ้ำเป็น TypeScript ไว้วาดภาพ
+ * เทสต์เทียบว่าเลือกทางเดียวกับโค้ดที่บล็อกแปลงออกมาจริง
+ */
+export function flockDirection(
+  match: ChaseMatch,
+  hunter: Hunter,
+  separate: number,
+  align: number,
+  gather: number
+): ChaseDirection | null {
+  const grid = match.arena.grid
+  const field = chaseField(grid, match.hero)
+  const mates = match.hunters.filter((other) => other.index !== hunter.index)
+  const middle =
+    mates.length === 0
+      ? null
+      : {
+          row: mates.reduce((sum, other) => sum + other.at.row, 0) / mates.length,
+          col: mates.reduce((sum, other) => sum + other.at.col, 0) / mates.length
+        }
+
+  let chosen: ChaseDirection | null = null
+  let best = -Infinity
+
+  for (const next of chaseNeighbors(grid, hunter.at)) {
+    if (mates.some((other) => other.at.row === next.row && other.at.col === next.col)) continue
+
+    let score = -field[next.row]![next.col]!
+    for (const other of mates) {
+      const gap = Math.abs(next.row - other.at.row) + Math.abs(next.col - other.at.col)
+      if (gap < 3) score -= separate * (3 - gap)
+      if (other.facing === next.dir) score += align
+    }
+    if (middle) score -= gather * (Math.abs(next.row - middle.row) + Math.abs(next.col - middle.col))
+
+    if (score > best) {
+      best = score
+      chosen = next.dir
+    }
+  }
+
+  return chosen
+}
+
+/** น้ำหนักของตัวอย่าง "ไล่เป็นฝูงปลา" */
+export const FLOCK_WEIGHTS = { separate: 0.6, align: 0.3, gather: 0.1 } as const
+
 function chaseDuel(
   arenaId: string,
   hunters: number,
   speed: number,
   ticks: number,
-  choose: (match: ChaseMatch) => RunnerChoice
+  choose: (match: ChaseMatch) => RunnerChoice,
+  hunterMove?: (match: ChaseMatch, hunter: Hunter) => ChaseDirection | null
 ): { match: ChaseMatch; looked: Point[]; runnerLooked: Point[] } {
   const match = createMatch(findChaseArena(arenaId), { hunters, hunterSpeed: speed })
   let runnerLooked: Point[] = []
@@ -668,7 +770,11 @@ function chaseDuel(
     if (match.over) break
 
     for (const hunter of dueHunters(match, speed)) {
-      moveHunter(match, hunter, chaseStep(match.arena.grid, hunter.at, pursuitAim(match, hunter)))
+      moveHunter(
+        match,
+        hunter,
+        hunterMove ? hunterMove(match, hunter) : chaseStep(match.arena.grid, hunter.at, pursuitAim(match, hunter))
+      )
     }
   }
 
@@ -754,6 +860,11 @@ export function buildFigures(): Record<string, Figure> {
 
   const raw = playMatch(byWeight(randomWeights(20260920)), corner)
 
+  const flock = othelloSwarm(40, 20260920)
+  const flockBest = playMatch(byBoardWeights(expandWeights(flock.best!)), corner)
+  const corners = Math.round(flock.best![0]!)
+  const besideCorner = Math.round(flock.best![4]!)
+
   const staged = playMatch(phases, corner)
 
   const dice = playMatch(randomPlay(20260920), corner)
@@ -829,6 +940,9 @@ export function buildFigures(): Record<string, Figure> {
   // ยีนกระโดดที่สุ่มได้ตอนเริ่มฝึก — เร็วเกินไปจนเป็นยีนที่การคัดเลือกต้องทิ้ง
   const EARLY_GENE = 0.4
   const earlyScene = runnerScene(EARLY_GENE, 4, 0)
+  const swarmScene = runnerScene(DINO_SWARM_FOUND.jump, 4, 0)
+  const swarmSpeed = Math.round(swarmScene.speed)
+  const swarmGap = Math.round(swarmScene.first?.distance ?? 0)
   const earlySpeed = Math.round(earlyScene.speed)
   const earlyGap = Math.round(earlyScene.first?.distance ?? 0)
 
@@ -839,8 +953,27 @@ export function buildFigures(): Record<string, Figure> {
   const fork = playRule('eight', 'bang-bang', bothSeen)
   const proportional = playRule('sharp', 'proportional')
   const pd = playRule('sharp', 'pd')
-  const final = playRule('final', 'switching')
-  const finalPd = playRule('final', 'pd')
+  const gaps = playRule('rcj-gaps', 'switching')
+  const gapsPd = playRule('rcj-gaps', 'pd')
+  const junctions = playRule('rcj-junctions', 'markers')
+  const junctionsPd = playRule('rcj-junctions', 'pd')
+  const lineMaze = playRule('line-maze', 'left-hand')
+
+  // ฝูงปลาสามตัวบนสนามตาราง ไล่ AI ที่หนีเป็น — หยุดภาพไว้ก่อนจับได้ จะได้เห็นว่าฝูงเข้าหาจากคนละทาง
+  const FLOCK_TICKS = 12
+  const school = chaseDuel('lattice', 3, 0.65, FLOCK_TICKS, evadeChoice, (match, hunter) =>
+    flockDirection(match, hunter, FLOCK_WEIGHTS.separate, FLOCK_WEIGHTS.align, FLOCK_WEIGHTS.gather)
+  )
+  const schoolGaps = school.match.hunters.map((hunter) => chaseLength(school.match.arena.grid, hunter.at, school.match.hero))
+
+  // ฝูงมดบนเขาวงกตแบบมีทางวน — ภาพต้องเหมือนเดิมทุกครั้ง จึงฝึกด้วยตัวสุ่มแบบกำหนดเมล็ด
+  const braid = createMaze({ kind: 'braid', seed: 1 })
+  const ants = trainColony(braid.grid, braid.start, braid.goal, 100, createRng(7))
+  const antTrail = followScent(ants.colony, braid.grid, braid.start, braid.goal)
+  const antFirst = ants.walks[0]!
+  const braidBest = solve(braid)
+  // ค่าที่ฝูงนกหาเจอบนสนามมุมหักศอก (ฝึก 100 รอบ เมล็ดสุ่มแรกของเทสต์) — เทสต์ตรวจว่ายังหาเจอค่านี้อยู่
+  const swarmFound = playWith('sharp', pdWith(SWARM_FOUND.power, SWARM_FOUND.kp, SWARM_FOUND.kd))
 
   return {
     'bang-bang': {
@@ -863,9 +996,41 @@ export function buildFigures(): Record<string, Figure> {
     },
     'behavior-switching': {
       kind: 'line',
-      run: final,
+      run: gaps,
       watched: [],
-      caption: `รอยของโปรแกรมสลับพฤติกรรมบนสนามรวมโจทย์ ครบรอบใน ${secondsOf(final.time)} วินาที · ตรงเส้นขาดสองช่วง รอยเป็นเส้นตรงพาดข้ามช่องว่าง ที่นั่นไม่มีอะไรให้เห็นเลย มันวิ่งตรงเพราะจำได้ว่าก่อนหน้านั้นเส้นอยู่นิ่ง ๆ กลางตัวมานาน · ส่วนตัวอย่าง PD บนสนามเดียวกันจบตั้งแต่วินาที ${secondsOf(finalPd.time)} เพราะเข้าโซนแดงแรกด้วยความเร็วเต็มที่`
+      caption: `รอยของโปรแกรมสลับพฤติกรรมบนสนาม RoboCupJunior · เส้นขาด ครบรอบใน ${secondsOf(gaps.time)} วินาที · ตรงเส้นขาดทั้งสี่ช่วง รอยเป็นเส้นตรงพาดข้ามช่องว่าง ที่นั่นไม่มีอะไรให้เห็นเลย มันวิ่งตรงเพราะจำได้ว่าก่อนหน้านั้นเส้นอยู่นิ่ง ๆ กลางตัวมานาน · ส่วนตัวอย่าง PD บนสนามเดียวกันหมุนหาเส้นตรงช่องว่างแรกจนกลับหัว แล้ววิ่งไม่ครบรอบภายใน ${secondsOf(gapsPd.time)} วินาที`
+    },
+    boids: {
+      kind: 'chase',
+      match: school.match,
+      looked: [],
+      caption: `จังหวะที่ ${FLOCK_TICKS} ของผู้ไล่ล่าสามตัวที่ใช้กฎฝูงปลา ไล่ AI ที่หนีเป็น — ตอนนี้ห่างตัวเอก ${schoolGaps.join(' · ')} ช่อง · ตัวหนึ่งประชิดตัวเอกทางซ้าย อีกสองตัวอยู่แถวบนคนละฝั่ง ไม่มีตัวไหนได้รับคำสั่งให้อ้อมไปอีกทาง แต่กฎ "แยก" ทำให้ตัวที่ตามหลังเพื่อนไม่ยอมเดินซ้อนทาง จึงกระจายออกไปเอง`
+    },
+    'ant-colony': {
+      kind: 'maze',
+      maze: braid,
+      explored: antFirst,
+      path: antTrail,
+      optimal: braidBest?.path ?? [],
+      caption: `ช่องสีจางคือที่มดตัวแรกเดินผ่าน — ยังไม่มีกลิ่นให้ตาม มันเดินวนไป ${(antFirst.length - 1).toLocaleString()} ก้าว ราคารวม ${pathCost(braid.grid, antFirst).toLocaleString()} กว่าจะถึงทางออก · เส้นม่วงคือทางที่เดินตามกลิ่นแรงที่สุดหลังปล่อยมด 100 ตัว ราคา ${pathCost(braid.grid, antTrail)} ส่วนเส้นเขียวประคือทางที่ถูกที่สุดของ Dijkstra ราคา ${braidBest?.cost ?? 0} — ฝูงมดหาทางเดียวกันเจอโดยไม่มีตัวไหนเห็นแผนที่`
+    },
+    'particle-swarm': {
+      kind: 'line',
+      run: swarmFound,
+      watched: [],
+      caption: `รอยของค่าที่ฝูงนกหาเจอบนสนามมุมหักศอก — กำลัง ${SWARM_FOUND.power} · Kp ${SWARM_FOUND.kp} · Kd ${SWARM_FOUND.kd} ครบรอบใน ${secondsOf(swarmFound.time)} วินาที เทียบกับ ${secondsOf(pd.time)} ของตัวอย่าง PD ที่คนจูน · Kp ที่ฝูงเลือกต่ำกว่าของคนเกือบครึ่ง แต่ Kd ใกล้เคียงกัน แปลว่าที่กำลังเต็ม หุ่นต้องเลี้ยวตามระยะที่เบี่ยงให้เบาลง แล้วพึ่งส่วน D ช่วยผ่อนก่อนเลยเส้น`
+    },
+    'line-maze-left-hand': {
+      kind: 'line',
+      run: lineMaze,
+      watched: [0],
+      caption: `รอยของมือซ้ายแตะกำแพงบนเขาวงกตบนเส้น ถึงวงกลมเส้นชัยใน ${secondsOf(lineMaze.time)} วินาที · ดูตรงทางตัน รอยวิ่งเข้าไปจนสุดเส้น หมุนกลับ แล้ววิ่งออกมาทางเดิม เพราะตอนหลุดเส้นแบบ P หมุนหาเส้นฝั่งที่เห็นครั้งสุดท้ายเอง · ทางตันด้านล่างไม่มีรอยเลย เพราะทุกครั้งที่ผ่านทางแยกนั้น ทางซ้ายคือทางอื่น`
+    },
+    'marker-memory': {
+      kind: 'line',
+      run: junctions,
+      watched: [0, 4],
+      caption: `รอยของโปรแกรมจำป้ายเขียวบนสนาม RoboCupJunior · ทางแยก ครบรอบใน ${secondsOf(junctions.time)} วินาที · สี่เหลี่ยมเขียวข้างเส้นคือป้าย อยู่ก่อนถึงทางแยกทุกครั้ง ตรงทางแยกแรกรอยหักเลี้ยวซ้ายทั้งที่ทางตรงไปก็มีเส้นดำ เพราะยังจำป้ายซ้ายได้ · ทางแยกถัดขึ้นไปไม่มีป้าย รอยจึงวิ่งตรงผ่าน ทั้งที่ทางตันแยกไปฝั่งเดียวกัน เพราะความจำหมดอายุไปก่อนแล้ว · ตัวอย่าง PD บนสนามเดียวกันวิ่งตรงเข้าทางตันแรก หลุดที่วินาที ${secondsOf(junctionsPd.time)}`
     },
     'reflex-rules': {
       kind: 'runner',
@@ -878,6 +1043,12 @@ export function buildFigures(): Record<string, Figure> {
       run: fastScene.run,
       watched: [0],
       caption: `กฎเดิมเป๊ะ แต่เป็นจังหวะที่ลู่เร่งมาถึง ${fastSpeed} พิกเซลต่อวินาทีแล้ว (ระดับ ${fastScene.run.level}) — คราวนี้ระยะที่เผื่อกลายเป็น ${Math.round(fastSpeed * MARGIN)} พิกเซล และของชิ้นหน้าอยู่ห่าง ${fastGap} พิกเซล · เลขพิกเซลเปลี่ยนไปเกือบเท่าตัวเมื่อเทียบกับภาพก่อนหน้า ทั้งที่ "เวลาที่เหลือก่อนชน" ยังเป็น ${MARGIN} วินาทีเท่าเดิม นี่คือเหตุผลที่ตัวเลขในกฎควรอยู่ในหน่วยเวลา`
+    },
+    'swarm-timing': {
+      kind: 'runner',
+      run: swarmScene.run,
+      watched: [0],
+      caption: `จังหวะที่ฝูงนกหาเจอหลังฝึก 60 รอบ: กระโดดเมื่อของเหลือเวลาถึงตัว ${DINO_SWARM_FOUND.jump} วินาที หมอบเมื่อเหลือ ${DINO_SWARM_FOUND.duck} วินาที · ภาพคือจังหวะที่เพิ่งสั่งกระโดดพอดี ลู่วิ่งอยู่ที่ ${swarmSpeed} พิกเซลต่อวินาที ของชิ้นหน้าอยู่ห่าง ${swarmGap} พิกเซล — เฉียดกว่ายีนตั้งต้นของ GA ในหัวข้อก่อนมาก ฝูงเรียนรู้ว่ายิ่งรอให้ของเข้ามาใกล้ ยิ่งตกลงมาทันก่อนของชิ้นถัดไป`
     },
     'evolved-timing': {
       kind: 'runner',
@@ -936,6 +1107,13 @@ export function buildFigures(): Record<string, Figure> {
       moves: [],
       last: end.last,
       caption: `เกมเดียวกันตอนจบ — ขาวคือ "ยึดมุมก่อน" ชนะ ${end.white}–${end.black} ทั้งที่ตอนตาที่ ${mid.played} ยังตามอยู่ ${mid.white}–${mid.black} · ไล่สายจากมุมทั้งสี่จะเห็นแถวขาวยาวที่ไม่เคยถูกพลิกอีกเลย นั่นคือที่มาของคะแนน`
+    },
+    'swarm-weights': {
+      kind: 'othello',
+      board: flockBest.board,
+      moves: [],
+      last: flockBest.last,
+      caption: `ตัวที่ดีที่สุดของฝูงนกหลังฝึก 40 เกม เล่นฝ่ายดำกับ "ยึดมุมก่อน" จบที่ ${flockBest.black}–${flockBest.white} · ฝูงให้น้ำหนักมุม ${corners} จากเต็ม 20 แต่ก็ให้ช่องทแยงติดมุมสูงถึง ${besideCorner} ด้วย ทั้งที่ผู้เล่นเก่ง ๆ ถือว่าช่องนั้นอันตราย เพราะเปิดมุมให้คู่แข่ง — ฝูงไม่ได้เข้าใจโอเทลโล มันแค่เจอน้ำหนักที่ชนะคู่ซ้อมตัวนี้ ซึ่งเดินเหมือนเดิมทุกเกม`
     },
     genetic: {
       kind: 'othello',

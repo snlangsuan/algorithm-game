@@ -2,6 +2,7 @@ import type { Matcher, Node, ParseContext } from '~/game/blocks/importer'
 import { createPack, type BlockProgram } from '~/game/blocks/pack'
 import { createBlock } from '~/game/blocks/program'
 import { quote, type BlockNode, type BlockSpec, type SelectOption } from '~/game/blocks/types'
+import { HANOI_EXPLAIN } from './explain'
 
 const PEGS: SelectOption[] = [
   { value: 'start', label: 'หมุดเริ่มต้น' },
@@ -566,6 +567,7 @@ export const WORK_LABEL: Record<string, string> = {
 export const HANOI_PACK = createPack({
   id: 'hanoi',
   blocks: [...BLOCKS, ...PLAN_BLOCKS],
+  explain: HANOI_EXPLAIN,
   parsers: { statements: STATEMENT_PARSERS, values: VALUE_PARSERS },
   target: {
     base: 'HanoiAgent',

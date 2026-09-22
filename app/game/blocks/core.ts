@@ -3,9 +3,9 @@ import { RAW_STATEMENT, RAW_VALUE, quote, register, type BlockSpec, type SelectO
 const MEMORY_KINDS = new Set(['remember', 'recall', 'forget'])
 
 export const VARIABLES: SelectOption[] = [
-  { value: 'a', label: 'ก' },
-  { value: 'b', label: 'ข' },
-  { value: 'c', label: 'ค' }
+  { value: 'a', label: 'a' },
+  { value: 'b', label: 'b' },
+  { value: 'c', label: 'c' }
 ]
 
 const COMPARISONS: SelectOption[] = [

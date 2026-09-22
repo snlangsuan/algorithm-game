@@ -10,7 +10,7 @@ import {
   locate,
   setInput
 } from '~/game/blocks/program'
-import type { BlockId, BlockNode } from '~/game/blocks/types'
+import { findSpec, type BlockId, type BlockNode } from '~/game/blocks/types'
 import {
   useBlockDrag,
   type BlockEditorApi,
@@ -95,6 +95,19 @@ function createEditorApi(deps: EditorDeps): BlockEditorApi {
       if (locked.value) return
 
       node.fields[name] = value
+      touched()
+    },
+
+    unpack(id) {
+      if (locked.value) return
+
+      const node = findBlock(program, id)
+      const at = locate(program, id)
+      const unpack = node ? findSpec(node.kind)?.unpack : undefined
+      if (!node || !at || !unpack) return
+
+      detach(program, id)
+      unpack(node).forEach((part, offset) => insertStatement(program, { ...at, index: at.index + offset }, part))
       touched()
     }
   }

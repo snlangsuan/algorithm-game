@@ -17,7 +17,8 @@ const blockEditorOpen = ref(false)
 const courseEditorOpen = ref(false)
 const editing = ref<Course | null>(null)
 
-const builtIn = COURSES
+/** เขาวงกตไม่ใช่วงปิด หน้าวาดสนามแก้ไม่ได้ — ไม่เอามาเป็นแบบตั้งต้น */
+const builtIn = COURSES.filter((course) => !course.maze)
 
 function drawCourse() {
   editing.value = null
@@ -68,25 +69,19 @@ async function start() {
           v-model:speed="game.speed.value"
           :status="game.status.value"
           :starting="starting"
-          :pilot="game.pilot.value"
           @start="start"
           @pause="game.pause"
           @resume="game.resume"
           @stop="game.stop"
         />
 
-        <LinePad v-if="game.pilot.value === 'player'" @press="game.press" />
-
         <LineSensors :run="game.run.value" :watched="game.watched.value" />
 
         <LineSetupPanel
           :course="game.course.value"
           :courses="game.courses.value"
-          :pilot="game.pilot.value"
-          :agent-name="game.blocks.program.name"
           :disabled="game.playing.value"
           @course="game.setCourse"
-          @pilot="game.setPilot"
           @draw="drawCourse"
           @edit="editCourse"
         />
@@ -127,7 +122,6 @@ async function start() {
               :status="game.status.value"
               :result="game.result.value"
               :ms="game.trace.ms"
-              :pilot="game.pilot.value"
               :best="game.bestTime.value"
             />
 
@@ -142,6 +136,18 @@ async function start() {
               :locked="game.blocks.locked.value"
               :disabled="game.playing.value"
               @preset="game.blocks.usePreset"
+            />
+
+            <LineTrainingPanel
+              v-if="game.learns.value || game.training.running"
+              :training="game.training"
+              :memory="game.memory.value"
+              :learns="game.learns.value"
+              :course-name="game.course.value.name"
+              :disabled="game.playing.value"
+              @train="game.train"
+              @stop="game.stopTraining"
+              @clear="game.clearMemory"
             />
           </template>
         </GamePanel>

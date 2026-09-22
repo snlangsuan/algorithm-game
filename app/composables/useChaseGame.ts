@@ -28,6 +28,7 @@ import { CHASE_PACK, DEFAULT_PRESET_ID } from '~/game/chase/blocks/pack'
 import { DEFAULT_RUNNER_PRESET_ID, RUNNER_PACK } from '~/game/chase/blocks/runner'
 import type { AuthorMode, BlockId } from '~/game/blocks/types'
 import type { LogLine } from '~/game/shared/console'
+import type { Reason } from '~/game/shared/reason'
 
 export type ChaseStatus = 'idle' | 'playing' | 'paused' | 'over' | 'error'
 
@@ -123,6 +124,8 @@ interface Brain {
   logs: Ref<LogLine[]>
   /** ช่องที่ฝ่ายนี้เปิดดูตอนคิดจังหวะล่าสุด */
   looked: ShallowRef<Point[]>
+  /** ตัวเลือกที่แต่ละตัวชั่งก่อนเดินจังหวะล่าสุด — ว่างถ้าบล็อกที่ใช้ไม่ได้บอกเหตุผลไว้ */
+  reasons: ShallowRef<Reason[]>
   agentName: Ref<string>
   source: ComputedRef<string>
   runner: ChaseRunner | null
@@ -151,6 +154,7 @@ function makeBrain(side: Side, blocks: ReturnType<typeof useBlockProgram>): Brai
     trace: reactive<ChaseTrace>(emptyTrace()),
     logs: ref<LogLine[]>([]),
     looked: shallowRef<Point[]>([]),
+    reasons: shallowRef<Reason[]>([]),
     agentName: ref('Agent'),
     source: computed(() => blocks.generated.value.code),
     runner: null
@@ -249,6 +253,9 @@ function createRunner(brain: Brain): ChaseRunner {
   })
 }
 
+const reasonsOf = (moves: Array<{ reason?: Reason }>): Reason[] =>
+  moves.flatMap((move) => (move.reason ? [move.reason] : []))
+
 /** ให้ AI ฝ่ายหนีเลือกทางหนึ่งก้าว แล้วเดินตามนั้น */
 async function moveHeroByAgent(run: ChaseRun, gen: number): Promise<void> {
   const brain = run.brains.runner
@@ -265,6 +272,7 @@ async function moveHeroByAgent(run: ChaseRun, gen: number): Promise<void> {
 
   const move = outcome.moves[0]
   brain.looked.value = outcome.looked
+  brain.reasons.value = reasonsOf(outcome.moves)
 
   if (move && !move.ok && move.note) run.notice.value = move.note
   stepHero(match, move?.dir ?? null)
@@ -313,6 +321,7 @@ async function moveHunters(run: ChaseRun, gen: number, heroBefore: Point): Promi
   }
 
   brain.looked.value = outcome.looked
+  brain.reasons.value = reasonsOf(outcome.moves)
 
   if (catcher(match, heroBefore, before) === null) return true
 
@@ -377,7 +386,9 @@ async function startRun(run: ChaseRun, arena: Arena, facing?: Direction): Promis
 
   disposeBrains(run)
 
-  run.seed.value = nextSeed()
+  // สนามที่โชว์อยู่ยังไม่ถูกเล่น ก็ใช้อันนั้นเลย ผู้ไล่ล่าจะได้เกิดตรงที่เห็นก่อนกดเริ่ม
+  // เล่นไปแล้ว (รอบก่อนจบ) ค่อยสุ่มใหม่ ไม่งั้นทุกรอบเกิดซ้ำที่เดิม
+  if (run.match.value.tick > 0 || run.match.value.over) run.seed.value = nextSeed()
   run.match.value = createMatch(arena, { ...run.options, seed: run.seed.value })
   if (facing && run.control.value === 'player') aim(run.match.value, facing)
 
@@ -390,6 +401,7 @@ async function startRun(run: ChaseRun, arena: Arena, facing?: Direction): Promis
     Object.assign(brain.trace, emptyTrace())
     brain.logs.value = []
     brain.looked.value = []
+    brain.reasons.value = []
   }
 
   run.status.value = 'playing'
@@ -533,12 +545,19 @@ export function useChaseGame() {
       brain.trace.running = false
       brain.trace.method = null
       brain.looked.value = []
+      brain.reasons.value = []
     }
 
     status.value = 'idle'
     overlay.value = false
     result.value = null
     notice.value = null
+    reroll()
+  }
+
+  /** สุ่มสนามชุดใหม่ให้เห็นก่อนกดเริ่ม — รอบที่เริ่มถัดไปจะใช้ชุดนี้เป๊ะ */
+  function reroll(): void {
+    seed.value = nextSeed()
     match.value = createMatch(arena.value, { ...options, seed: seed.value })
   }
 
@@ -583,7 +602,7 @@ export function useChaseGame() {
 
     stop()
     Object.assign(options, next)
-    match.value = createMatch(arena.value, { ...options, seed: seed.value })
+    reroll()
   }
 
   const setArena = (id: string) => configure({ arenaId: id })

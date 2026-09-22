@@ -14,6 +14,16 @@ import {
   type Run
 } from './engine'
 import { DUCK_CLEAR } from './art'
+import { fly, readSwarm, score, valueOf, type Range } from '../line/swarm'
+
+/**
+ * ขอบเขตที่ฝูงนกหาในเกมวิ่งหลบ — จังหวะกระโดดกับจังหวะหมอบ (วินาทีก่อนถึงตัว)
+ * ช่วงเดียวกับที่ตัวอย่าง GA สุ่มยีนตั้งต้น จะได้เทียบสองวิธีกันตรง ๆ
+ */
+export const DINO_SPACE: ReadonlyArray<Range<'jump' | 'duck'>> = [
+  { key: 'jump', label: 'จังหวะกระโดด', min: 0.05, max: 0.4 },
+  { key: 'duck', label: 'จังหวะหมอบ', min: 0.05, max: 0.4 }
+]
 
 /** สิ่งกีดขวางหนึ่งชิ้นเท่าที่โปรแกรมมองเห็น */
 export interface ObstacleView {
@@ -107,6 +117,38 @@ export class DinoAgent {
 
   /** บันทึกความจำลงเครื่อง — ตัวรันเป็นคนเขียนทับเมธอดนี้ */
   saveMemory(_data: DinoMemory): void {}
+
+  /** ค่าของนกที่ลองอยู่รอบนี้ — ยังไม่ได้สั่งให้ฝูงบินก็เป็น null */
+  private bird: number[] | null = null
+
+  /** ฝูงนก: นกตัวถัดไปบินหนึ่งก้าวไปยังจังหวะชุดใหม่ แล้วจำฝูงไว้ข้ามรอบ */
+  swarmFly(): void {
+    const swarm = fly(readSwarm(this.memory?.swarm, DINO_SPACE), Math.random, DINO_SPACE)
+    this.bird = swarm.birds[swarm.current]!.at
+    this.saveMemory({ ...this.memory, swarm, label: `ฝูงนกบินไปแล้ว ${swarm.turn} ก้าว` })
+  }
+
+  /** ฝูงนก: จังหวะที่นกตัวนี้เลือก (วินาที) — ยังไม่ได้สั่งบินก็ได้ค่ากลางของช่วง */
+  birdValue(dimension: 'jump' | 'duck'): number {
+    if (this.bird) return valueOf(this.bird, dimension, DINO_SPACE)
+    const range = DINO_SPACE.find((item) => item.key === dimension)
+    return range ? (range.min + range.max) / 2 : 0
+  }
+
+  /** ฝูงนก: จังหวะที่ดีที่สุดที่ทั้งฝูงเคยเจอ — ยังไม่มีก็ได้ค่าของนกตัวนี้ */
+  swarmBest(dimension: 'jump' | 'duck'): number {
+    const swarm = readSwarm(this.memory?.swarm, DINO_SPACE)
+    return swarm?.best ? valueOf(swarm.best, dimension, DINO_SPACE) : this.birdValue(dimension)
+  }
+
+  /** ฝูงนก: ให้คะแนนนกตัวนี้ — เกมนี้ยิ่งวิ่งไกลยิ่งดี ฝูงเก็บเป็นค่าติดลบเพื่อหาค่าที่น้อยที่สุด */
+  swarmScore(value: number): void {
+    const swarm = readSwarm(this.memory?.swarm, DINO_SPACE)
+    if (!swarm) return
+    const next = score(swarm, -Number(value))
+    const best = next.bestScore === null ? '' : ` · ไกลสุด ${Math.round(-next.bestScore).toLocaleString()}`
+    this.saveMemory({ ...this.memory, swarm: next, label: `ฝูงนกบินไปแล้ว ${next.turn} ก้าว${best}` })
+  }
 
   /** บอกเกมว่ากำลังจ้องชิ้นไหนอยู่ — จอจะตีกรอบให้เห็นว่าโปรแกรมคิดถึงตัวไหน */
   watch(_index: number): void {}

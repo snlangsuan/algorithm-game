@@ -4,7 +4,7 @@ import { GROUP_LABEL, GROUP_NOTE, GROUP_ORDER, topicsIn } from '~/data/algorithm
 useSeoMeta({
   title: 'ความรู้ — Algorithm Game',
   description:
-    'อัลกอริทึมที่อยู่เบื้องหลังเกมนี้ — เลาะกำแพง, โลภ, GA, DFS, BFS, Dijkstra, A*, minimax พร้อมบล็อกอธิบายการทำงาน'
+    'อัลกอริทึมที่อยู่เบื้องหลังเกมนี้ — เลาะกำแพง, โลภ, GA, DFS, BFS, Dijkstra, A*, minimax, PID, ฝูงนก (PSO), ฝูงมด (ACO), ฝูงปลา (Boids) พร้อมบล็อกอธิบายการทำงาน'
 })
 
 const groups = GROUP_ORDER.map((group) => ({

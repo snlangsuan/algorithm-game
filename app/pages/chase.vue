@@ -80,6 +80,7 @@ const editorTitle = computed(() =>
           :runner-looked="game.brains.runner.looked.value"
           :duration="game.pace.value.tickMs"
           :status="game.status.value"
+          :reasons="game.shown.value.reasons.value"
         >
           <ChaseResultOverlay
             v-if="game.overlay.value && game.result.value"
@@ -185,6 +186,8 @@ const editorTitle = computed(() =>
               :calls="game.shown.value.trace.calls"
               :ticks="game.match.value.tick"
             />
+
+            <BlockReason :reasons="game.shown.value.reasons.value" />
           </template>
 
         </GamePanel>
