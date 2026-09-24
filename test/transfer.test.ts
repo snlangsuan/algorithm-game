@@ -9,10 +9,11 @@ import { DINO_PACK } from '~/game/dino/blocks/pack'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 import { countBlocks } from './helpers'
 
-const PACKS = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, DINO_PACK, LINE_PACK]
+const PACKS = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, DINO_PACK, LINE_PACK, GO_PACK]
 
 for (const pack of PACKS) {
   for (const preset of pack.presets) {

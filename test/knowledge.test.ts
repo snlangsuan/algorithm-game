@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs'
 import { demoFor } from '~/data/algorithm-blocks'
 import { GROUP_LABEL, GROUP_ORDER, TOPICS, findTopic, topicsIn } from '~/data/algorithms'
 import { CHASE_PACK } from '~/game/chase/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { DINO_PACK } from '~/game/dino/blocks/pack'
 import { RUNNER_PACK } from '~/game/chase/blocks/runner'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
@@ -86,7 +87,7 @@ test('ตัวอย่างที่หน้าความรู้อ้�
   for (const topic of TOPICS) {
     if (!topic.preset) continue
 
-    const pack = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK].find(
+    const pack = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK, GO_PACK].find(
       (item) => item.id === topic.preset!.game
     )
     assert.ok(pack, `${topic.slug}: ชี้ไปเกม '${topic.preset.game}' ที่ไม่มีอยู่`)

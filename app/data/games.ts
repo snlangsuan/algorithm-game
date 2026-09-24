@@ -9,10 +9,11 @@ import { RUNNER_PACK } from '~/game/chase/blocks/runner'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
 /** ภาพย่อที่ GameThumb วาดให้ — ชื่อตรงกับ id ของ pack */
-export type GameThumbKind = 'maze' | 'othello' | 'hanoi' | 'chase' | 'dino' | 'line'
+export type GameThumbKind = 'maze' | 'othello' | 'hanoi' | 'chase' | 'dino' | 'line' | 'go'
 
 export interface GameEntry {
   /** เส้นทางของหน้าเกม — ตรงกับ id ของ pack เสมอ */
@@ -45,6 +46,15 @@ export const GAMES: GameEntry[] = [
       'เล่นเองกับเพื่อน หรือปล่อยบอทสองตัวแข่งกัน บอทที่ใช้บล็อกความจำจะจำผลเกมก่อนไว้ ซ้อมหลายเกมแล้วเก่งขึ้นจริง',
     thumb: 'othello',
     packs: [OTHELLO_PACK]
+  },
+  {
+    to: '/go',
+    name: 'หมากล้อม',
+    what: 'เล่นกับบอท 9 ระดับ หรือเขียนวิธีคิดเอง',
+    detail:
+      'กระดาน 9×9 13×13 หรือ 19×19 ล้อมหมากของอีกฝ่ายให้หมดลมหายใจแล้วจับออก ใครล้อมพื้นที่ได้มากกว่าเมื่อจบเกมเป็นฝ่ายชนะ · เลือกคู่ต่อสู้ได้ตั้งแต่ระดับ 9 คิวที่ลงมั่ว ไปจนถึง 1 คิวที่ค้นด้วย MCTS เต็มเวลา หรือต่อบล็อกเขียนวิธีคิดของตัวเองลงไปสู้',
+    thumb: 'go',
+    packs: [GO_PACK]
   },
   {
     to: '/chase',

@@ -19,12 +19,14 @@ import { RUNNER_PACK } from '~/game/chase/blocks/runner'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 import { countBlocks, countRaw, presetsOf, walkBlocks } from './helpers'
 
 const ALL = [
   ...presetsOf(MAZE_PACK),
   ...presetsOf(OTHELLO_PACK),
+  ...presetsOf(GO_PACK),
   ...presetsOf(HANOI_PACK),
   ...presetsOf(CHASE_PACK),
   ...presetsOf(RUNNER_PACK),

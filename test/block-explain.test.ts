@@ -13,6 +13,7 @@ import { DINO_PACK } from '~/game/dino/blocks/pack'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
 /**
@@ -20,7 +21,7 @@ import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
  * และชื่อเมธอดในการ์ดต้องเปิดดูโค้ดจริงได้ ไม่ใช่ชื่อที่เปลี่ยนไปแล้ว
  */
 
-const PACKS: BlockPack[] = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK]
+const PACKS: BlockPack[] = [MAZE_PACK, OTHELLO_PACK, HANOI_PACK, CHASE_PACK, RUNNER_PACK, DINO_PACK, LINE_PACK, GO_PACK]
 
 const GAME = join(process.cwd(), 'app', 'game')
 

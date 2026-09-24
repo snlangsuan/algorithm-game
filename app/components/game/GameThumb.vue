@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  buildGoPreview,
   buildChasePreview,
   buildDinoPreview,
   buildHanoiPreview,
@@ -22,6 +23,18 @@ const hanoi = computed(() => (props.kind === 'hanoi' ? buildHanoiPreview() : nul
 const chase = computed(() => (props.kind === 'chase' ? buildChasePreview() : null))
 const dino = computed(() => (props.kind === 'dino' ? buildDinoPreview() : null))
 const line = computed(() => (props.kind === 'line' ? buildLinePreview() : null))
+const go = computed(() => (props.kind === 'go' ? buildGoPreview() : null))
+
+/** ช่องของกระดานโกะที่มีหมากอยู่ — หมากวางบนจุดตัดเส้น ไม่ใช่ในช่อง */
+const goStones = computed(() => {
+  const preview = go.value
+  if (!preview) return []
+  const out: Array<{ row: number; col: number; color: number }> = []
+  for (const [index, cell] of preview.board.entries()) {
+    if (cell !== 0) out.push({ row: Math.floor(index / preview.size), col: index % preview.size, color: cell })
+  }
+  return out
+})
 
 const toPoints = (list: Array<{ x: number; y: number }>) =>
   list.map((at) => `${at.x.toFixed(0)},${at.y.toFixed(0)}`).join(' ')
@@ -264,6 +277,37 @@ const mud = computed(() => cellsOf((cell) => cell === MUD))
           stroke-width="0.06"
         />
       </g>
+    </svg>
+
+    <svg v-else-if="go" viewBox="-1 -1 10 10" class="h-full w-full" role="presentation">
+      <rect x="-1" y="-1" width="10" height="10" rx="0.6" fill="#e9c98d" />
+
+      <g stroke="#8a6a3a" stroke-width="0.06">
+        <line v-for="n in go.size" :key="`gr${n}`" :x1="0" :y1="n - 1" :x2="go.size - 1" :y2="n - 1" />
+        <line v-for="n in go.size" :key="`gc${n}`" :x1="n - 1" :y1="0" :x2="n - 1" :y2="go.size - 1" />
+      </g>
+
+      <!-- ดาว (โฮชิ) ของกระดาน 9×9 -->
+      <circle v-for="spot in [[2, 2], [2, 6], [6, 2], [6, 6], [4, 4]]" :key="`h${spot[0]}-${spot[1]}`" :cx="spot[1]" :cy="spot[0]" r="0.14" fill="#8a6a3a" />
+
+      <circle
+        v-for="stone in goStones"
+        :key="`s${stone.row}-${stone.col}`"
+        :cx="stone.col"
+        :cy="stone.row"
+        r="0.42"
+        :fill="stone.color === 1 ? '#241a2f' : '#f7f5fb'"
+        :stroke="stone.color === 1 ? 'none' : '#c9c2e0'"
+        stroke-width="0.05"
+      />
+
+      <circle
+        v-if="go.last"
+        :cx="go.last.col"
+        :cy="go.last.row"
+        r="0.16"
+        :fill="goStones.find((stone) => stone.row === go!.last!.row && stone.col === go!.last!.col)?.color === 1 ? '#f7f5fb' : '#241a2f'"
+      />
     </svg>
 
     <svg v-else-if="othello" viewBox="-0.2 -0.2 8.4 8.4" class="h-full w-full" role="presentation">

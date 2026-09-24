@@ -1,3 +1,5 @@
+import { createPosition as createGoPosition, isLegal as isGoLegal, play as playGo } from '~/game/go/engine'
+import { botMove, seedBots } from '~/game/go/bots'
 import {
   createMaze,
   createRng,
@@ -115,6 +117,13 @@ export interface LinePreview {
   run: LineRun
 }
 
+export interface GoPreview {
+  size: number
+  /** กระดานแบน ๆ ความยาว size × size — 0 ว่าง 1 ดำ 2 ขาว */
+  board: Uint8Array
+  last: { row: number; col: number } | null
+}
+
 export interface OthelloPreview {
   board: Board
 
@@ -132,6 +141,10 @@ const PREVIEW_PLIES = 18
 const PREVIEW_SEED = 5
 
 const PREVIEW_DISKS = 5
+
+const PREVIEW_GO_PLIES = 34
+
+const PREVIEW_GO_SEED = 11
 
 const PREVIEW_STEPS = 11
 
@@ -293,4 +306,24 @@ export function buildLinePreview(): LinePreview {
   const run = playRule('wave', 'pd', (current) => lapPercent(current) >= PREVIEW_LINE_PERCENT)
 
   return { track: run.track.points, trail: run.trail, run }
+}
+
+/**
+ * ภาพย่อหมากล้อม — ให้บอท "แพทเทิร์น" เล่นกันเองบนกระดาน 9×9 ไม่กี่ตา
+ * ใช้เมล็ดสุ่มตายตัว ภาพย่อจึงเหมือนเดิมทุกครั้งที่เปิดหน้าแรก
+ */
+export function buildGoPreview(): GoPreview {
+  seedBots(PREVIEW_GO_SEED)
+
+  let position = createGoPosition(9)
+  let last: { row: number; col: number } | null = null
+
+  for (let ply = 0; ply < PREVIEW_GO_PLIES; ply++) {
+    const move = botMove('pattern', position, position.toPlay, 5, last ? last.row * 9 + last.col : null)
+    if (move === 'pass' || !isGoLegal(position, move, position.toPlay)) break
+    position = playGo(position, move, position.toPlay).position
+    last = move
+  }
+
+  return { size: position.size, board: position.board, last }
 }

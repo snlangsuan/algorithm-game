@@ -1,0 +1,146 @@
+<script setup lang="ts">
+import { BLACK, type Player } from '~/game/go/engine'
+import type { BlockPack, BlockProgram } from '~/game/blocks/pack'
+
+/** ฝ่ายนี้ให้คนเล่นเอง หรือให้โปรแกรมที่ต่อจากบล็อกเล่น */
+type SideKind = 'human' | 'code'
+
+/** ความจำที่ฝ่ายนี้เคยฝึกเก็บไว้ — รูปร่างเดียวกับที่หน้าเกมเก็บลง localStorage */
+interface GoMemoryInfo {
+  label?: string
+  bytes: number
+}
+
+/**
+ * การ์ดตั้งค่าของฝ่ายหนึ่ง (ดำหรือขาว)
+ *
+ * รับทุกอย่างมาเป็น prop แล้วส่งเหตุการณ์ออกอย่างเดียว การ์ดนี้จึงเอาไปวางซ้ำ
+ * ได้ทั้งสองฝ่ายโดยไม่ต้องรู้ว่าเกมกำลังอยู่ในสถานะไหน
+ */
+const props = withDefaults(
+  defineProps<{
+    player: Player
+    kind: SideKind
+    /** ชื่อที่โชว์เวลาฝ่ายนี้เป็นบอท เช่นชื่อโปรแกรมที่เลือกไว้ */
+    name: string
+
+    pack: BlockPack
+    program: BlockProgram
+    presetId: string
+    locked?: boolean
+    disabled?: boolean
+
+    /** ฝ่ายนี้ฝึกเก็บความจำได้ไหม */
+    trainable?: boolean
+    /** กำลังฝึกอยู่ — ระหว่างนี้กดอะไรไม่ได้ */
+    training?: boolean
+    memory?: GoMemoryInfo | null
+  }>(),
+  { locked: false, disabled: false, trainable: true, training: false, memory: null }
+)
+
+const emit = defineEmits<{
+  'update:kind': [kind: SideKind]
+  'update:preset': [id: string]
+  'clear-memory': []
+  train: []
+}>()
+
+const isBlack = computed(() => props.player === BLACK)
+
+const sideName = computed(() => (isBlack.value ? 'ดำ' : 'ขาว'))
+
+const memorySize = computed(() => (props.memory ? `${(props.memory.bytes / 1024).toFixed(1)} KB` : ''))
+
+const kinds: Array<{ value: SideKind; label: string }> = [
+  { value: 'human', label: 'คน' },
+  { value: 'code', label: 'บอท' }
+]
+</script>
+
+<template>
+  <div class="rounded-xl bg-surface-muted p-3">
+    <div class="flex items-center gap-2.5">
+      <span
+        class="size-6 shrink-0 rounded-full shadow-soft"
+        :class="isBlack ? 'bg-gradient-to-br from-[#413354] to-[#1c1524]' : 'border border-line-strong bg-white'"
+      />
+
+      <div class="min-w-0 flex-1">
+        <p class="flex items-center gap-1.5 text-sm font-semibold text-ink">
+          {{ sideName }}
+          <UiInfo v-if="kind === 'human'" label="ฝั่งนี้เล่นยังไง" align="left">
+            คลิกบนจุดตัดของเส้นเพื่อลงหมากในตาของฝั่งนี้ · ไม่อยากลงก็กดปุ่ม "ผ่านตา" ได้
+          </UiInfo>
+        </p>
+        <p class="truncate text-[11px] text-ink-subtle">
+          {{ isBlack ? 'ลงก่อน' : 'ลงทีหลัง ได้โคมิชดเชย' }}
+          <template v-if="kind === 'code'"> · {{ name }}</template>
+        </p>
+      </div>
+
+      <div class="flex rounded-full bg-surface p-0.5 ring-1 ring-line">
+        <button
+          v-for="option in kinds"
+          :key="option.value"
+          type="button"
+          :disabled="disabled"
+          class="rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+          :class="
+            kind === option.value
+              ? 'bg-primary-600 text-white shadow-soft'
+              : 'text-ink-muted hover:text-primary-700'
+          "
+          @click="emit('update:kind', option.value)"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="kind === 'code'" class="mt-2.5 space-y-2">
+      <BlockAlgorithmPicker
+        bare
+        :pack="pack"
+        :program="program"
+        :preset-id="presetId"
+        :locked="locked"
+        :disabled="disabled"
+        @preset="emit('update:preset', $event)"
+      />
+
+      <UiButton
+        v-if="trainable"
+        variant="outline"
+        size="sm"
+        block
+        :disabled="disabled || training"
+        @click="emit('train')"
+      >
+        {{ training ? 'กำลังฝึกอยู่' : `ฝึกฝ่าย${sideName}` }}
+      </UiButton>
+
+      <div v-if="memory" class="flex items-center gap-2 rounded-lg bg-surface px-2 py-1.5 ring-1 ring-line">
+        <svg viewBox="0 0 24 24" fill="none" class="size-3.5 shrink-0 text-primary-600" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="2" />
+          <path d="M9 9h6v6H9z" fill="currentColor" />
+        </svg>
+
+        <p class="min-w-0 flex-1 truncate text-[11px] text-ink-muted">
+          {{ memory.label || 'มีความจำบันทึกไว้' }}
+        </p>
+
+        <span class="shrink-0 text-[10px] tabular-nums text-ink-subtle">{{ memorySize }}</span>
+
+        <button
+          type="button"
+          :disabled="disabled"
+          class="shrink-0 text-[11px] font-medium text-ink-subtle transition-colors hover:text-primary-700 disabled:opacity-50"
+          @click="emit('clear-memory')"
+        >
+          ล้าง
+        </button>
+      </div>
+    </div>
+  </div>
+</template>

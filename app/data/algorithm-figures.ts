@@ -87,6 +87,19 @@ import {
   type Move,
   type Player
 } from '~/game/othello/engine'
+import { botMove as goBot, playoutWinner as goPlayout, seedBots as seedGo, uctMove as goUct } from '~/game/go/bots'
+import {
+  BLACK as GO_BLACK,
+  createPosition as createGo,
+  isEye as goIsEye,
+  isLegal as goIsLegal,
+  legalMoves as goLegalMoves,
+  play as goPlay,
+  score as goScore,
+  toNotation as goName,
+  type Player as GoPlayer,
+  type Position as GoPosition
+} from '~/game/go/engine'
 
 export interface MazeFigure {
   kind: 'maze'
@@ -147,7 +160,22 @@ export interface LineFigure {
   caption: string
 }
 
-export type Figure = MazeFigure | OthelloFigure | HanoiFigure | ChaseFigure | RunnerFigure | LineFigure
+export interface GoFigure {
+  kind: 'go'
+  position: GoPosition
+  /** ตาล่าสุด — กระดานปักหมุดไว้ให้เห็นว่าเรื่องเกิดตรงไหน */
+  last: { row: number; col: number } | null
+  caption: string
+}
+
+export type Figure =
+  | MazeFigure
+  | OthelloFigure
+  | HanoiFigure
+  | ChaseFigure
+  | RunnerFigure
+  | LineFigure
+  | GoFigure
 
 /** ทศนิยมหนึ่งตำแหน่ง — ระยะห่างจากเส้นในคำบรรยาย */
 const pixels = (value: number): string => value.toFixed(1)
@@ -827,6 +855,190 @@ function runnerScene(margin: number, seed: number, untilSpeed: number) {
   return { run, first: runnerView(run, 500).obstacles[0] ?? null, speed: runnerSpeed(run) }
 }
 
+// ---------- หมากล้อม ----------
+
+type GoPoint = { row: number; col: number }
+type GoKind = Parameters<typeof goBot>[0]
+
+/**
+ * เดินหนึ่งเกมบนกระดาน 9×9 ด้วยบอทสองตัว แล้วคืนกระดานตอนจบ พร้อมตาที่จับได้มากที่สุดของฝ่ายดำ
+ *
+ * ล็อกเมล็ดสุ่มของ bots.ts ไว้ทุกครั้ง ภาพจึงเหมือนเดิมเป๊ะทุกรอบที่สร้าง
+ * ใช้เฉพาะบอทที่ตัดสินด้วยกฎ (ไม่สุ่มเล่นจนจบ) ภาพทั้งชุดจึงสร้างเสร็จในเสี้ยววินาที
+ */
+function goMatch(black: GoKind, white: GoKind, seed: number, limit = 400) {
+  seedGo(seed)
+
+  let position = createGo(9)
+  let last: GoPoint | null = null
+  let biggest: { taken: number; position: GoPosition; last: GoPoint | null; turn: number } = {
+    taken: 0,
+    position,
+    last: null,
+    turn: 0
+  }
+  /** ตาแรกหลังตาที่ 12 ที่ดำตอบติดกับตาที่ขาวเพิ่งลงพอดีหนึ่งช่อง */
+  let answer: { turn: number; reply: GoPoint; to: GoPoint; stones: number; position: GoPosition } | null = null
+
+  for (let step = 0; step < limit && position.passes < 2; step++) {
+    const side = position.toPlay
+    const before = last
+    let choice = goBot(side === GO_BLACK ? black : white, position, side, 20, before ? before.row * 9 + before.col : null)
+    if (choice !== 'pass' && !goIsLegal(position, choice, side)) choice = 'pass'
+
+    const result = goPlay(position, choice, side)
+    position = result.position
+    last = choice === 'pass' ? null : choice
+
+    if (side !== GO_BLACK || !last) continue
+
+    if (result.captured.length > biggest.taken) {
+      biggest = { taken: result.captured.length, position, last, turn: position.turn - 1 }
+    }
+
+    const gap = before ? Math.abs(before.row - last.row) + Math.abs(before.col - last.col) : 0
+    if (!answer && before && gap === 1 && step > 12) {
+      answer = {
+        turn: position.turn - 1,
+        reply: last,
+        to: before,
+        stones: position.board.reduce((sum, cell) => sum + (cell === 0 ? 0 : 1), 0),
+        position
+      }
+    }
+  }
+
+  return { position, last, biggest, answer }
+}
+
+/** ช่องที่ลงได้และยังคุ้มจะลง — ชุดเดียวกับที่บอทกับบล็อกไล่ดู */
+const goSensible = (position: GoPosition, player: GoPlayer): number[] =>
+  goLegalMoves(position, player).filter((index) => !goIsEye(position.board, position.size, index, player))
+
+/** นับหมากของฝ่ายนั้นแยกตามเส้นที่มันยืนอยู่ — 0 คือริมสุด 2 กับ 3 คือเส้นที่สามกับสี่ */
+function goLines(position: GoPosition, player: GoPlayer) {
+  let total = 0
+  let edge = 0
+  let good = 0
+
+  for (let index = 0; index < position.board.length; index++) {
+    if (position.board[index] !== player) continue
+    const row = Math.floor(index / position.size)
+    const col = index % position.size
+    const from = Math.min(row, col, position.size - 1 - row, position.size - 1 - col)
+    total++
+    if (from === 0) edge++
+    if (from === 2 || from === 3) good++
+  }
+
+  return { total, edge, good }
+}
+
+/** น้ำหนักที่ RAVE ให้สถิติของตัวเอง — สูตรเดียวกับ pickChild() ใน bots.ts */
+const goBeta = (rave: number, real: number) => rave / (rave + real + (real * rave) / 700)
+
+const percent = (value: number) => `${Math.round(value * 100)}%`
+
+function goFigures(): Record<string, GoFigure> {
+  // สุ่มล้วนเจอสุ่มล้วน เล่นจนจบ
+  const dice = goMatch('random', 'random', 20260923)
+  const diceScore = goScore(dice.position)
+  const diceTaken = dice.position.captures[1] + dice.position.captures[2]
+  const diceOwned = diceScore.territory[1] + diceScore.territory[2]
+
+  // กฎจับ/หนีอาตาริ เจอสุ่มล้วน — เก็บจังหวะที่จับได้มากที่สุด
+  const hunt = goMatch('capture', 'random', 7)
+  const caught = hunt.biggest
+
+  // แพทเทิร์น 3×3 เจอกฎจับ — เก็บจังหวะที่ตอบติดกับตาที่อีกฝ่ายเพิ่งลง
+  const shapes = goMatch('pattern', 'capture', 11)
+  const reply = shapes.answer
+
+  // อิทธิพล เจอแพทเทิร์น — ดูว่าหมากไปยืนเส้นไหนกันบ้าง
+  const area = goMatch('influence', 'pattern', 3)
+  const areaScore = goScore(area.position)
+  const lines = goLines(area.position, GO_BLACK)
+
+  // กระดานกลางเกมหนึ่งใบ ใช้ร่วมกันทั้งสามหน้าของสายมอนติคาร์โล
+  const mid = goMatch('pattern', 'capture', 5, 30)
+  const board = mid.position
+  const side = board.toPlay
+  const options = goSensible(board, side)
+
+  // สุ่มเล่นจนจบ 30 ครั้ง กับช่องเดียว — ตัวเลขเดียวกับที่ชุด "สุ่มเล่นจนจบ" ใช้ต่อหนึ่งตา
+  const PER_MOVE = 30
+  const pick = options[Math.floor(options.length / 2)] ?? options[0] ?? 0
+  const probe: GoPoint = { row: Math.floor(pick / board.size), col: pick % board.size }
+  seedGo(99)
+  let won = 0
+  for (let round = 0; round < PER_MOVE; round++) {
+    if (goPlayout(board, probe, side)) won++
+  }
+  const rate = won / PER_MOVE
+  const wobble = Math.sqrt((rate * (1 - rate)) / PER_MOVE)
+
+  // ค้นด้วยต้นไม้จากกระดานใบเดียวกัน — ล็อกที่จำนวนรอบ ไม่ใช่เวลา ผลจึงเหมือนเดิมทุกเครื่อง
+  const ROUNDS = 400
+  seedGo(2024)
+  const uctPick = goUct(board, side, { rounds: ROUNDS, budgetMs: 600_000 })
+  seedGo(2024)
+  const ravePick = goUct(board, side, { rounds: ROUNDS, budgetMs: 600_000, rave: true })
+
+  const after = (move: ReturnType<typeof goUct>) =>
+    move === 'pass' ? { position: board, last: mid.last } : { position: goPlay(board, move, side).position, last: move }
+
+  const uctAfter = after(uctPick)
+  const raveAfter = after(ravePick)
+  const name = (move: GoPoint | null) => (move ? goName(board.size, move.row, move.col) : 'ผ่านตา')
+
+  return {
+    'go-random': {
+      kind: 'go',
+      position: dice.position,
+      last: dice.last,
+      caption: `สุ่มล้วนเจอสุ่มล้วนบนกระดาน 9×9 เล่นจนจบ — จบที่ตาที่ ${dice.position.turn} ดำได้พื้นที่ ${diceScore.area[1]} ขาวได้ ${diceScore.area[2]} (รวมโคมิ ${diceScore.komi} แล้วขาวนำ ${Math.abs(diceScore.lead)} แต้ม) · ระหว่างทางสองฝ่ายจับหมากกันไปรวม ${diceTaken} เม็ดโดยไม่มีใครตั้งใจ และตอนจบมีที่ว่างที่เป็นของใครชัด ๆ แค่ ${diceOwned} ช่อง ที่เหลือคือหมากที่ถมกันจนเต็ม · เกมนี้จบได้เพราะกฎข้อเดียวคือห้ามลงถมตาตัวเอง พอเหลือแต่ตาของสองฝ่าย ทั้งคู่ก็หาที่ลงไม่ได้แล้วผ่านตาติดกัน`
+    },
+    'go-capture': {
+      kind: 'go',
+      position: caught.position,
+      last: caught.last,
+      caption: `ตาที่ ${caught.turn} ของเกมที่ "ไล่จับกับหนีอาตาริ" (ดำ) เจอตัวสุ่ม (ขาว) — หมุดคือช่อง ${name(caught.last)} ที่ดำเพิ่งลง แล้วยกหมากขาวออกทีเดียว ${caught.taken} เม็ด · หมู่ขาวก้อนนั้นถูกล้อมจนเหลือลมหายใจเส้นเดียวมาหลายตาแล้ว ตัวสุ่มมองไม่เห็นเพราะมันไม่เคยนับลมหายใจเลยสักครั้ง ส่วนดำมีกฎข้อเดียวคือ "เห็นหมู่ไหนเหลือลมหายใจ 1 ก็ลงปิดทันที" · ทั้งเกมดำจับได้ ${hunt.position.captures[1]} เม็ด เสียไป ${hunt.position.captures[2]} เม็ด`
+    },
+    'go-pattern': {
+      kind: 'go',
+      position: reply ? reply.position : shapes.position,
+      last: reply ? reply.reply : shapes.last,
+      caption: reply
+        ? `ตาที่ ${reply.turn} ของ "แพทเทิร์น 3×3" (ดำ) เจอ "ไล่จับกับหนีอาตาริ" (ขาว) — ขาวเพิ่งลงที่ ${goName(9, reply.to.row, reply.to.col)} แล้วดำตอบที่ ${goName(9, reply.reply.row, reply.reply.col)} ซึ่งอยู่ติดกันพอดีหนึ่งช่อง · แพทเทิร์นไม่เคยดูทั้งกระดาน มันดูแค่ช่องว่างสี่ช่องรอบตาที่อีกฝ่ายเพิ่งลง แล้วนับสีรอบช่องนั้นอีกสี่ทิศ · ผลคือหมากเกาะกันเป็นกลุ่มต่อเนื่องแบบที่คนเล่นจริงทำ ไม่กระจายไปคนละมุมกระดานเหมือนตัวสุ่ม — ตอนนั้นบนกระดานมีหมากแล้ว ${reply.stones} เม็ด`
+        : `กระดานของ "แพทเทิร์น 3×3" (ดำ) เจอ "ไล่จับกับหนีอาตาริ" (ขาว) · แพทเทิร์นไม่เคยดูทั้งกระดาน มันดูแค่ช่องว่างสี่ช่องรอบตาที่อีกฝ่ายเพิ่งลง แล้วนับสีรอบช่องนั้นอีกสี่ทิศ ผลคือหมากเกาะกันเป็นกลุ่มต่อเนื่องแบบที่คนเล่นจริงทำ`
+    },
+    'go-influence': {
+      kind: 'go',
+      position: area.position,
+      last: area.last,
+      caption: `จบเกมของ "อิทธิพล" (ดำ) เจอ "แพทเทิร์น 3×3" (ขาว) — ดำได้พื้นที่ ${areaScore.area[1]} ขาวได้ ${areaScore.area[2]} คือแพ้ขาด · ดูตำแหน่งหมากดำที่เหลือ ${lines.total} เม็ด: มี ${lines.good} เม็ดยืนอยู่เส้นที่สามหรือสี่ตามที่สูตรชอบ แต่ก็มีถึง ${lines.edge} เม็ดที่ริมสุด เพราะพอกลางเกมช่องดี ๆ ถูกยึดไปหมดแล้ว สูตรก็เลือกได้แค่ที่ที่เหลือ · นี่คือข้ออ่อนของการประเมินด้วยอิทธิพล — เก่งเรื่องเลือกที่ยืนตอนกระดานยังโล่ง แต่ไม่รู้เรื่องการปะทะเลย จึงแพ้ตัวที่ตอบใกล้ ๆ ได้`
+    },
+    'go-montecarlo': {
+      kind: 'go',
+      position: board,
+      last: mid.last,
+      caption: `กระดานกลางเกมที่ตาที่ ${board.turn} ถึงตาดำ — ตรงนี้มีตาที่ลงได้ ${options.length} ตา · วิธีสุ่มเล่นจนจบแบบแบนจะเอาทุกตาเหล่านั้นมาสุ่มเล่นให้จบตาละ ${PER_MOVE} ครั้ง รวม ${(options.length * PER_MOVE).toLocaleString('en-US')} เกมที่ต้องเล่นจนจบ เพื่อตัดสินใจแค่ตาเดียว · ลองเฉพาะช่อง ${goName(9, probe.row, probe.col)} ช่องเดียว ${PER_MOVE} ครั้ง ได้ชนะ ${won} ครั้ง = ${percent(rate)} ซึ่งฟังดูดี แต่ความคลาดเคลื่อนของการสุ่มแค่ ${PER_MOVE} ครั้งกว้างราว ±${percent(wobble)} ตัวเลขนี้จึงยังแยกไม่ออกจากการโยนเหรียญ — นั่นคือเหตุผลที่แบบแบนเปลืองเวลามาก`
+    },
+    'go-uct': {
+      kind: 'go',
+      position: uctAfter.position,
+      last: uctAfter.last,
+      caption: `กระดานใบเดียวกับหน้า "สุ่มเล่นจนจบแบบแบน" แต่ให้ UCT ค้น ${ROUNDS} รอบแล้วลงตาที่ได้ — หมุดคือช่อง ${name(uctAfter.last)} · ${ROUNDS} รอบคือสุ่มเล่นจนจบ ${ROUNDS} เกม น้อยกว่าที่แบบแบนต้องใช้ (${(options.length * PER_MOVE).toLocaleString('en-US')} เกม) เกือบสี่เท่า แต่ใช้คุ้มกว่ามาก เพราะ ${options.length} รอบแรกถูกใช้เปิดกิ่งให้ครบทุกตาเท่านั้น ส่วนอีก ${ROUNDS - options.length} รอบที่เหลือถูกทุ่มให้กิ่งที่คะแนน UCT สูงสุดในตอนนั้น · ตาที่ตอบคือกิ่งที่ถูกลองมากที่สุด ไม่ใช่กิ่งที่อัตราชนะสูงสุด`
+    },
+    'go-rave': {
+      kind: 'go',
+      position: raveAfter.position,
+      last: raveAfter.last,
+      caption: `กระดานเดิม ค้น ${ROUNDS} รอบเท่ากัน เปลี่ยนแค่เปิดสถิติ RAVE — มันเลือกช่อง ${name(raveAfter.last)} ${name(raveAfter.last) === name(uctAfter.last) ? 'ตรงกับ UCT พอดี ซึ่งเป็นเรื่องที่เกิดบ่อยเมื่อรอบมากพอ' : 'ต่างจากที่ UCT เลือก'} เพราะน้ำหนัก β ที่ให้ RAVE ลดลงเข้าหาศูนย์เมื่อสถิติจริงสะสมมากขึ้น · ลองแทนตัวเลขในสูตรดู: กิ่งที่มีสถิติจริง 5 ครั้งและสถิติ RAVE 60 ครั้ง ได้ β = ${goBeta(60, 5).toFixed(2)} คือเชื่อ RAVE ราว ${percent(goBeta(60, 5))} · พอสถิติจริงขึ้นเป็น 200 ครั้ง β เหลือ ${goBeta(60, 200).toFixed(2)} คือหันไปเชื่อของจริงเกือบหมด · กำไรของ RAVE จึงอยู่ที่ช่วงรอบยังน้อย ไม่ใช่ที่คำตอบสุดท้ายเมื่อค้นนานพอ`
+    }
+  }
+}
+
 let cache: Record<string, Figure> | null = null
 
 export function buildFigures(): Record<string, Figure> {
@@ -976,6 +1188,8 @@ export function buildFigures(): Record<string, Figure> {
   const swarmFound = playWith('sharp', pdWith(SWARM_FOUND.power, SWARM_FOUND.kp, SWARM_FOUND.kd))
 
   return {
+    ...goFigures(),
+
     'bang-bang': {
       kind: 'line',
       run: bang,

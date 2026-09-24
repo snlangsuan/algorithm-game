@@ -8,6 +8,7 @@ import { RUNNER_PACK } from '~/game/chase/blocks/runner'
 import { HANOI_PACK } from '~/game/hanoi/blocks/pack'
 import { LINE_PACK } from '~/game/line/blocks/pack'
 import { MAZE_PACK } from '~/game/maze/blocks/pack'
+import { GO_PACK } from '~/game/go/blocks/pack'
 import { OTHELLO_PACK } from '~/game/othello/blocks/pack'
 
 type Fields = Record<string, string | number>
@@ -134,7 +135,8 @@ const PACK_OF: Record<string, BlockPack> = {
   othello: OTHELLO_PACK,
   hanoi: HANOI_PACK,
   dino: DINO_PACK,
-  line: LINE_PACK
+  line: LINE_PACK,
+  go: GO_PACK
 }
 
 export function demoFor(slug: string, preset?: TopicPreset): Demo | null {

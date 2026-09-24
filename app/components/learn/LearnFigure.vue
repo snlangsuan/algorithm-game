@@ -43,6 +43,15 @@ const walkShown = computed(() =>
         <LineField quiet :run="figure.run" status="over" :watched="figure.watched" />
       </div>
 
+      <div v-else-if="figure.kind === 'go'" class="mx-auto w-full max-w-[24rem]">
+        <GoBoard
+          :position="figure.position"
+          :last-move="figure.last"
+          disabled
+          :show-coords="false"
+        />
+      </div>
+
       <div v-else-if="figure.kind === 'othello'" class="mx-auto w-full max-w-[22rem]">
         <OthelloBoard :board="figure.board" :valid-moves="figure.moves" :last-move="figure.last" />
       </div>
